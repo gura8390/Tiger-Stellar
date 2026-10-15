@@ -1,0 +1,29 @@
+[package]
+name = "stellaris-parser"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+[features]
+default = ["stellaris_parser"]
+stellaris_parser = []
+[build-dependencies]
+lalrpop = "0.22.0"
+[dependencies]
+ansiterm = "0.12.2"
+atomic_enum = "0.3.0"
+bimap = "0.6.3"
+bumpalo = "3.16"
+encoding_rs = "0.8.32"
+lalrpop-util = { version = "0.22.0", features = ["unicode", "lexer"] }
+phf = { version = "0.13", features = ["macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+strum = { version = "0.28", features = ["phf"] }
+strum_macros = "0.28"
+thiserror = "2"
+unicode-width = "0.2"
+ahash = "0.8"
+scc = "3.6.8"
+itertools = "0.14.0"
+glob = "0.3.2"
+anyhow = "1"

@@ -1,0 +1,2 @@
+﻿tiger_stellar_player_owner = { owner = { is_ai = no } }
+tiger_stellar_macro = { $SCOPE$ = { is_ai = $VALUE|no$ } }

@@ -1,0 +1,2 @@
+﻿tiger_stellar_player_owner = { owner = { clerical_region_title = { always = yes } } }
+tiger_stellar_macro = { $SCOPE$ = { is_ai = $VALUE|no$ } }

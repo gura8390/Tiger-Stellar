@@ -1,0 +1,13 @@
+/dist/
+/build/
+/cache/
+/verification/
+/reports/
+/upstream/target/
+.venv/
+__pycache__/
+*.pyc
+*.spec
+.env
+.env.*
+!.env.example

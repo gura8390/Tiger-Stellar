@@ -1,0 +1,3 @@
+[workspace]
+members = ["stellaris-parser"]
+resolver = "3"
