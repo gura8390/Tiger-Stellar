@@ -44,3 +44,16 @@ Checks include syntax, supported trigger/effect scopes, scope links, scripted ca
 本版本已完成相应交付，但仍是实验性的有限语义检查器。未覆盖区域保留告警；检查结果不等于引擎、玩法或存档验收，也不保证无误报。
 
 This repository contains runnable source, rules, synthetic regression fixtures, and build instructions. Machine-specific handoffs, design documents, private verification copies, game assets, caches, and release archives are excluded.
+
+
+## Implementation overview / 实现范围
+
+| Component | What this project adds or adapts |
+|---|---|
+| Syntax parser | Standalone Tiger-derived Rust syntax core; no other game backend is linked. |
+| Stellaris rules | Versioned Stellaris 4.5.2 scope/API and declaration tables. |
+| Semantic checker | Layered definitions, references, scope checks, scripted calls, component/ship contracts and localization checks in Python. |
+| Diagnostics | Targeted vanilla comparisons, provenance, override reports and explicit coverage warnings. |
+| Regression suite | 202 source-level tests passed during preparation of the published source; no in-game acceptance is implied. |
+
+This repository currently publishes source rather than binary Release downloads. For the separate CK3 adaptation, see [Tiger CK3](https://github.com/gura8390/Tiger-CK3).
