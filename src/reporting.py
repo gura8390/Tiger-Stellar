@@ -45,6 +45,7 @@ def traced(method,kind):
     return invoke
 
 def annotate(checker,node,record):
+    record['statement']={k:node[k] for k in ['key','value','operator'] if k in node}
     record['expression_sha256']=digest(node)
     frames=[dict(x) for x in getattr(checker,'validation_frames',[])]
     record['call_chain']=frames

@@ -19,7 +19,9 @@ class Status015(unittest.TestCase):
   self.error(self.definition('damage={min=20 max=10}total_fire_time=1'),'range-order')
  def test_damage_missing_endpoint(self):self.error(self.definition('damage={min=1}total_fire_time=1'),'missing-field')
  def test_damage_wrong_field(self):self.error(self.definition('damage={min=1 maximun=2}total_fire_time=1'),'unknown-field')
- def test_damage_not_a_block(self):self.error(self.definition('damage=10 total_fire_time=1'),'structure')
+ # Installed 4.5.2 component documentation explicitly allows fixed damage=X.
+ def test_damage_fixed_scalar(self):self.clean(self.definition('damage=10 total_fire_time=1'))
+ def test_damage_invalid_scalar(self):self.error(self.definition('damage="!" total_fire_time=1'),'value')
  def test_damage_numeric(self):self.error(self.definition('damage={min="!" max=2}total_fire_time=1'),'value')
  def test_damage_duplicate(self):self.error(self.definition('damage={min=1 min=2 max=3}total_fire_time=1'),'duplicate-field')
  def test_damage_nonfinite(self):self.error(self.definition('damage={min=nan max=2}total_fire_time=1'),'value')

@@ -45,6 +45,10 @@ class ShipContracts:
 
     def strict_range(self,n,ctx):
         from stellar import children,fields,number
+        if 'children' not in n and n.get('key') in {'damage','collateral_damage','chain_damage'}:
+            self.numeric(n,ctx);value=number(n.get('value'))
+            if value is not None and (not math.isfinite(value) or value<0):self.emit('value',n['key']+' must be finite and nonnegative',n)
+            self.checked['weapon_ranges']+=1;return
         if not self.require_block(n):return
         f=fields(n)
         for missing in {'min','max'}-f.keys():self.emit('missing-field',n['key']+' requires '+missing,n)
@@ -60,7 +64,7 @@ class ShipContracts:
         lo=number(f.get('min',{}).get('value'));hi=number(f.get('max',{}).get('value'))
         # Native planet-killer windup uses min=90/max=0; do not impose damage
         # ordering on this separate timing structure without an engine contract.
-        if n.get('key')=='damage' and lo is not None and hi is not None and lo>hi:self.emit('range-order',n['key']+' min exceeds max',n)
+        if n.get('key') in {'damage','collateral_damage','chain_damage'} and lo is not None and hi is not None and lo>hi:self.emit('range-order',n['key']+' min exceeds max',n)
         if lo is None or hi is None:self.gap('dynamic '+n['key']+' bounds cannot be ordered statically',n)
         self.checked['weapon_ranges']+=1
 
@@ -68,7 +72,14 @@ class ShipContracts:
         from stellar import children,fields,Context
         if category!='component_templates':return False
         k=n.get('key')
-        if k in {'damage','windup'}:self.strict_range(n,ctx);return True
+        if k in {'damage','windup','collateral_damage','chain_damage'}:self.strict_range(n,ctx);return True
+        if k=='size':
+            value=self.scalar(n)
+            if value is not None and value.lower() not in {'point_defence','small','medium','large','extra_large','titanic','torpedo','planet_killer','aux','engulf'}:self.emit('value','unknown component size '+value,n)
+            return True
+        if k=='on_hit':
+            if self.require_block(n):self.script(children(n),'effects',Context('ship','?',('ship',)))
+            return True
         if k in {'friendly_aura','hostile_aura'}:
             if not self.require_block(n):return True
             f=fields(n);target='ship' if val(n,'apply_on','ships')=='ships' else 'fleet'
@@ -82,7 +93,7 @@ class ShipContracts:
                     if self.scalar(c) not in {'ships','fleets'}:self.emit('value','aura apply_on expects ships/fleets',c)
                 elif key=='stack_info':
                     if self.require_block(c):
-                        for missing in {'id','priority'}-fields(c).keys():self.emit('missing-field','stack_info requires '+missing,c)
+                        for missing in {'id'}-fields(c).keys():self.emit('missing-field','stack_info requires '+missing,c)
                         for x in children(c):
                             if x.get('key')=='id':self.scalar(x)
                             elif x.get('key')=='priority':self.numeric(x,ctx)
@@ -91,6 +102,21 @@ class ShipContracts:
                     if self.require_block(c):self.modifier(c,aura_ctx)
                 elif key=='limit':
                     if self.require_block(c):self.script(children(c),'triggers',aura_ctx)
+                elif key=='graphics':
+                    if self.require_block(c):
+                        for effect in children(c):
+                            if effect.get('key') not in {'area_effect','ship_effect'}:self.emit('unknown-field','unknown aura graphics field '+str(effect.get('key')),effect);continue
+                            if not self.require_block(effect):continue
+                            if 'entity' not in fields(effect):self.emit('missing-field','aura graphics effect requires entity',effect)
+                            for parameter in children(effect):
+                                if parameter.get('key')=='entity':self.ref('gfx_entity',self.scalar(parameter),parameter)
+                                elif parameter.get('key')=='dynamic_scale':self.boolean(parameter)
+                                else:self.emit('unknown-field','unknown aura graphics parameter '+str(parameter.get('key')),parameter)
+                elif key=='damage_per_day':
+                    if self.require_block(c):
+                        for parameter in children(c):
+                            if parameter.get('key') not in {'accuracy','damage','hull_damage','armor_damage','shield_damage','armor_penetration','shield_penetration','size_damage_factor'}:self.emit('unknown-field','unknown aura damage parameter '+str(parameter.get('key')),parameter)
+                            else:self.numeric(parameter,aura_ctx)
                 else:self.emit('unknown-field','unknown aura field '+str(key),c)
             if 'name' not in f:self.emit('missing-field','aura requires name',n)
             self.checked['component_auras']+=1;return True
@@ -103,6 +129,8 @@ class ShipContracts:
     def weapon_contract(self,n):
         from stellar import fields,number,Context
         f=fields(n);kind=n.get('key');key=val(n,'key')
+        if kind in {'weapon_component_template','utility_component_template','strike_craft_component_template'} and not key:
+            self.emit('missing-field','component template requires key after inline expansion',n);return
         if kind=='weapon_component_template':
             if 'cooldown' in f:self.emit('unknown-field','ordinary weapons use total_fire_time, not strike-craft cooldown',f['cooldown'])
             # Vanilla weapons may obtain statistics from the final weapon CSV.
@@ -142,10 +170,17 @@ class ShipContracts:
                         for req in children(n):
                             if req.get('key')!='required_component_set':continue
                             group=req.get('value');candidates=[c for c in comps.values() if val(c,'component_set')==group]
-                            possible=[hull_condition(children(fields(c).get('potential',{})),hull) for c in candidates]
+                            from condition_solver import PotentialProof
+                            proof=PotentialProof(self,hull).prove(candidates)
+                            proofs=getattr(self,'potential_proofs',None)
+                            if proofs is None:proofs=[];self.potential_proofs=proofs
+                            proofs.append({'hull':hull,'component_set':group,**proof})
+                            direct=[hull_condition(children(fields(c).get('potential',{})),hull) for c in candidates]
                             if not candidates: self.emit('ship-compatibility','required component set '+str(group)+' has no components',req)
-                            elif all(x is False for x in possible):self.emit('ship-compatibility','no component in required set '+str(group)+' is applicable to hull '+hull,req)
-                            elif True not in possible:self.gap('required set '+str(group)+' for '+hull+' has unresolved component eligibility',req)
+                            elif all(x is False for x in direct):self.emit('ship-compatibility','no component in required set '+str(group)+' is applicable to hull '+hull,req)
+                            elif proof['status']=='impossible':self.gap('required set '+str(group)+' potential rejects '+hull+'; fixed/generated design bypass contract is not verified',req)
+                            elif proof['status']!='covered':self.gap('required set '+str(group)+' for '+hull+' has unresolved component eligibility',req)
+                            else:self.checked['required_set_potential_proofs']+=1
         # A cycle cannot have a final upgrade; report only cycles reached from targets.
         for category,idfield in [('ship_sizes',None),('component_templates','key')]:
             for path,cat,ast in target:
@@ -201,7 +236,7 @@ class ShipContracts:
                         selected.append(component)
                         if contract:
                             actual={'utility_component_template':'utility','strike_craft_component_template':'strike_craft'}.get(component.get('key'),'weapon')
-                            if val(contract,'size') not in {'any',val(component,'size')} or val(contract,'component') not in {'any',actual}:self.emit('ship-compatibility','component '+ck+' has incompatible size/type for slot '+str(cs),c)
+                            if str(val(contract,'size')).lower() not in {'any',str(val(component,'size')).lower()} or val(contract,'component') not in {'any',actual}:self.emit('ship-compatibility','component '+ck+' has incompatible size/type for slot '+str(cs),c)
                     if contract is None:unknown.append('unresolved slot contract')
                 if set(slots)-occupied:unknown.append('unfilled optional component slots')
             required=[x.get('value') for x in children(h) if x.get('key')=='required_component_set'];sets=[]

@@ -45,6 +45,7 @@ def extract(source, game, destination):
                 if stem.startswith('trait_'):entry['iterator_output']='trait'
             special_outputs={'random_galaxy_species':'species','any_galaxy_species':'species','every_galaxy_species':'species','closest_system':'galactic_object','owned_planet_list_tooltip':'planet','owned_colony_list_tooltip':'colony','count_owned_pop_amount':'pop_group','count_owned_species':'species','count_owned_pop_group':'pop_group'}
             if name in special_outputs:entry['iterator_output']=special_outputs[name]
+            if name=='weighted_random_owned_pop_group' and 'owned_pop_group script list' in body:entry['iterator_output']='pop_group'
             if re.sub(r'^(any|count|every|random|ordered)_','',name) in {'owned_species','galaxy_species','enslaved_species'} and ('species' in body):entry['iterator_output']='species'
             entries[name] = entry
         schema[kind] = entries

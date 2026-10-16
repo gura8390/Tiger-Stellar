@@ -1,6 +1,6 @@
 """Reference and list checks; does not validate rendering or mesh interiors."""
 import hashlib,re,struct
-from pathlib import PurePosixPath
+from pathlib import Path,PurePosixPath
 
 class AssetsNames:
     def asset_reference(self,value,n):
@@ -8,20 +8,39 @@ class AssetsNames:
         rel=value.replace('\\','/');parts=PurePosixPath(rel)
         if parts.is_absolute() or '..' in parts.parts or ':' in rel:self.emit('asset-path','resource path must stay within a loaded game root: '+value,n);return
         if any(x in rel for x in ['$','[','@']):self.gap('dynamic resource path: '+value,n);return
-        found=None
-        for root in reversed(self.asset_roots):
-            p=root/rel
-            if p.is_file():found=p;break
-            if any(rel.lower().startswith(prefix) for prefix in getattr(self,'asset_replace_paths',{}).get(str(root),[])):break
+        # Native .asset/.gfx references may be relative to their source file.
+        # Overlay search always uses the relative candidate across ALL layers,
+        # never an absolute sibling bypassing replace_path or dependency order.
+        candidates=[rel];source=Path(n.get('_source_path') or self.file)
+        source_rel=None
+        for root in self.asset_roots:
+            if source.is_relative_to(root):source_rel=source.relative_to(root).as_posix();break
+        if source_rel:
+            candidates.append((PurePosixPath(source_rel).parent/parts).as_posix())
+            # Vanilla mesh declarations share placeholder material textures.
+            if source_rel.startswith('gfx/models/') and '/' not in rel and parts.suffix.lower() in {'.dds','.tga'}:candidates.append('gfx/models/'+rel)
+        found=None;resolved=None
+        for candidate in dict.fromkeys(candidates):
+            for root in reversed(self.asset_roots):
+                p=root/candidate
+                if p.is_file():found=p;resolved=candidate;break
+                if any(candidate.lower().startswith(prefix) for prefix in getattr(self,'asset_replace_paths',{}).get(str(root),[])):break
+            if found:break
         if found is None:self.emit('missing-asset','resource file not found: '+rel,n);return
-        data=found.read_bytes();self.asset_inputs[str(found)]={'relative_path':rel,'path':str(found),'sha256':hashlib.sha256(data).hexdigest(),'asset':True}
-        if found.suffix.lower()=='.dds':
-            good=len(data)>=128 and data[:4]==b'DDS '
-            if good:
-                size,flags,height,width=struct.unpack_from('<4I',data,4)
-                good=size==124 and height>0 and width>0 and struct.unpack_from('<I',data,76)[0]==32
-                if data[84:88]==b'DX10' and len(data)<148:good=False
-            if not good:self.emit('dds-header','invalid or truncated DDS header/dimensions: '+rel,n)
+        cache=getattr(self,'_asset_checks',None)
+        if cache is None:cache={};self._asset_checks=cache
+        stat=found.stat();stamp=(stat.st_size,stat.st_mtime_ns)
+        if str(found) not in cache or cache[str(found)][0]!=stamp:
+            data=found.read_bytes();self.asset_inputs[str(found)]={'relative_path':resolved,'path':str(found),'sha256':hashlib.sha256(data).hexdigest(),'asset':True}
+            good=True
+            if found.suffix.lower()=='.dds':
+                good=len(data)>=128 and data[:4]==b'DDS '
+                if good:
+                    size,flags,height,width=struct.unpack_from('<4I',data,4)
+                    good=size==124 and height>0 and width>0 and struct.unpack_from('<I',data,76)[0]==32
+                    if data[84:88]==b'DX10' and len(data)<148:good=False
+            cache[str(found)]=(stamp,good)
+        if not cache[str(found)][1]:self.emit('dds-header','invalid or truncated DDS header/dimensions: '+rel,n)
         self.checked['resource_file_references']+=1
 
     def index_graphics(self,ast,path):
@@ -51,7 +70,7 @@ class AssetsNames:
         self.gap('graphics behavior/shader/material semantics beyond resource references are not implemented')
 
     def name_list(self,n):
-        from stellar import children
+        from stellar import children,Context
         def string_list(node):
             if not self.require_block(node):return
             for c in children(node):
@@ -69,11 +88,20 @@ class AssetsNames:
                 elif k=='weight':self.numeric(c)
                 elif k=='generic' or k in self.entities['planet_classes']:pool(c)
                 else:self.gap('name list pool alternative: '+str(k),c)
-        allowed={'category','alias','randomized','customize_random_override','ship_names','ship_class_names','fleet_names','army_names','planet_names','character_names'}
+        allowed={'category','alias','randomized','customize_random_override','ship_names','ship_class_names','fleet_names','army_names','planet_names','character_names','selectable','by_rarity_names','design_names','trigger','should_name_home_system_planets'}
         for c in children(n):
             k=c.get('key')
             if k not in allowed:self.emit('unknown-field','unknown name list field '+str(k),c)
-            elif k=='randomized':self.boolean(c)
+            elif k in {'selectable','trigger'}:
+                scope='none' if k=='selectable' else 'country'
+                if self.require_block(c):self.script(children(c),'triggers',Context(scope,scope))
+            elif k=='design_names':string_list(c)
+            elif k=='by_rarity_names':
+                if self.require_block(c):
+                    for rarity in children(c):
+                        if rarity.get('key') not in {'common','rare','epic','exceptional'}:self.emit('unknown-field','unknown ship name rarity '+str(rarity.get('key')),rarity)
+                        else:string_list(rarity)
+            elif k in {'randomized','should_name_home_system_planets'}:self.boolean(c)
             elif k in {'category','alias','customize_random_override'}:self.scalar(c)
             elif k=='fleet_names':pool(c)
             elif k=='character_names':

@@ -1,8 +1,12 @@
-# Tiger Stellar 0.1.4
+# Tiger Stellar 0.1.7
 
 A Windows static checker for **Stellaris Cygnus 4.5.2 (9776)** mods, with a Tiger-derived Rust syntax parser and a separate Python semantic checker.
 
 群星模组静态检查器：基于 Tiger 解析器，独立实现群星规则、作用域检查、实体引用与多模组覆盖分析。
+
+## Latest changes / 最新变化
+
+**0.1.7** adds more precise warning reasons and scope evidence in JSON, plus fleet action queues, situation creation, arrival callbacks, parameterized inline scripts, and selected reference checks. It also includes the crash, asset-path, and semantic coverage fixes from 0.1.5–0.1.6. See [CHANGELOG.md](CHANGELOG.md) for details and validation limits.
 
 ## Credits and thanks / 致谢
 
@@ -54,6 +58,6 @@ This repository contains runnable source, rules, synthetic regression fixtures, 
 | Stellaris rules | Versioned Stellaris 4.5.2 scope/API and declaration tables. |
 | Semantic checker | Layered definitions, references, scope checks, scripted calls, component/ship contracts and localization checks in Python. |
 | Diagnostics | Targeted vanilla comparisons, provenance, override reports and explicit coverage warnings. |
-| Regression suite | 202 source-level tests passed during preparation of the published source; no in-game acceptance is implied. |
+| Regression suite | 352 source-level tests and 9 Rust parser tests passed for the 0.1.7 publication; no in-game acceptance is implied. |
 
 This repository currently publishes source rather than binary Release downloads. For the separate CK3 adaptation, see [Tiger CK3](https://github.com/gura8390/Tiger-CK3).

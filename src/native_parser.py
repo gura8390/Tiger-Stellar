@@ -48,7 +48,7 @@ def parse_many(paths, batch_size=100, globals_text=''):
             if 'fatal' in item: raise RuntimeError(item['fatal'])
             yield explain_braces(item,Path(item['path']).read_text(encoding='utf-8-sig'))
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def _parse_text_payload(exe,identity,text,path,globals_text):
     p=subprocess.run([exe],input=json.dumps({'path':path,'content':text,'globals':globals_text})+'\n',capture_output=True,encoding='utf8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if p.returncode: raise RuntimeError(p.stderr)

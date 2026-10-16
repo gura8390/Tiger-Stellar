@@ -7,8 +7,11 @@ from handoff_rules import HandoffRules
 from ship_contracts import ShipContracts
 from engine_entries import EngineEntries
 from assets_names import AssetsNames
+from context_flow import ContextFlow
+from coverage_extensions import CoverageExtensions
+from fleet_actions import FleetActions
 
-class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames):
+class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames,ContextFlow,CoverageExtensions,FleetActions):
     def building_icon_asset(self,value,n):
         """Building icons may name a surviving DDS without a building entity."""
         if not value or any(s in value for s in ['..','/','\\']):return False
@@ -206,6 +209,18 @@ class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames):
         if self.handoff_field(category,child,ctx):return True
         from stellar import children,fields
         k=child.get('key','')
+        if category=='special_projects' and k=='triggered_requirement':
+            from stellar import Context,UNKNOWN
+            if not self.require_block(child):return True
+            for missing in {'text','trigger'}-fields(child).keys():self.emit('missing-field','triggered_requirement requires '+missing,child)
+            for item in children(child):
+                key=item.get('key')
+                if key=='text':self.localisation(item)
+                elif key=='count':self.numeric(item,ctx)
+                elif key=='trigger':
+                    if self.require_block(item):self.script(children(item),'triggers',Context('fleet',UNKNOWN))
+                else:self.emit('unknown-field','unknown triggered_requirement field '+str(key),item)
+            return True
         if category=='pop_jobs' and k=='swappable_data':
             if not self.require_block(child):return True
             for variant in children(child):

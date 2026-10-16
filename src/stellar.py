@@ -15,7 +15,7 @@ from coverage_rules import CoverageRules
 # must refer to this same module and Context type, not a second imported copy.
 if __name__=='__main__':sys.modules['stellar']=sys.modules[__name__]
 
-VERSION='0.1.4'
+VERSION='0.1.7'
 UNKNOWN='?'
 def children(n): return n.get('children',[])
 def fields(n): return {x.get('key'):x for x in children(n) if 'key' in x}
@@ -23,6 +23,14 @@ def values(n): return [x['value'] for x in children(n) if 'value' in x and 'key'
 def number(v):
     try: return float(v)
     except (ValueError,TypeError): return None
+
+def scoped_numeric_variable(value):
+    """Dots inside reader expressions/parameter values aren't scope separators.
+
+    Explicit expression syntaxes have their own parsers below. Only a dotted
+    variable reference reaches resolve(), where misspelled links still error.
+    """
+    return bool(value and '.' in value and number(value) is None and not value.startswith('@') and not any(marker in value for marker in ['value:','modifier:','trigger:']))
 
 @dataclass(frozen=True)
 class Context:
@@ -41,7 +49,8 @@ REFS['has_government']='governments'
 REFS['has_component']='component_templates'
 REFS.update({'has_district':'districts','has_building_construction':'buildings'})
 REFS['has_psionic_aura']='patrons/psionic_auras'
-LOGIC={'and','or','not','nor','nand','hidden_trigger','hidden_effect','hidden_tooltip','tooltip','custom_tooltip','custom_tooltip_with_modifiers','custom_description','if','else_if','else','while'}
+REFS['has_resource']='strategic_resources'
+LOGIC={'and','or','not','nor','nand','hidden_trigger','hidden_effect','hidden_tooltip','tooltip','custom_tooltip','custom_tooltip_fail','success_text','custom_tooltip_with_modifiers','custom_description','if','else_if','else','while'}
 
 class Checker(CoverageRules):
     def __init__(self,rules):
@@ -59,6 +68,7 @@ class Checker(CoverageRules):
         self.asset_roots=[];self.asset_inputs={};self.variable_types={};self.project_locations={};self.reader_variables={}
         self.definitions=collections.defaultdict(dict);self.weapon_stats={};self.engine_entries=[];self.ship_feasibility=[]
         self.definition_history=collections.defaultdict(list)
+        self.event_contexts={};self.next_event_contexts={};self.script_contexts={}
         self.modifiers=set(rules['modifiers']);self.file='';self.mod_files=set();self.input_manifest=[];self.inline={};self.globals_text='';self.invoked=set();self.expansion_trace=[]
         decl=resource_root()/'rules/declarations-4.5.2.json'
         declarations=json.loads(decl.read_text(encoding='utf8'))
@@ -74,26 +84,32 @@ class Checker(CoverageRules):
             if record is not None:
                 snapshot={'severity':severity,'key':key};annotate(self,node,snapshot)
                 if snapshot['call_chain'] not in record['call_paths']:record['call_paths'].append(snapshot['call_chain'])
-            return
+            return record
         self._unique.add(signature)
         self.diagnostics.append(dict(path=path,line=node.get('line',0),column=node.get('column',0),key=key,severity=severity,message=message))
         from reporting import annotate
         annotate(self,node,self.diagnostics[-1])
         self.diagnostics[-1]['call_paths']=[self.diagnostics[-1]['call_chain']]
         self._diagnostic_by_signature[signature]=self.diagnostics[-1]
-    def gap(self,message,node=None):
+        from diagnostic_kinds import classify
+        classify(self.diagnostics[-1])
+        return self.diagnostics[-1]
+    def gap(self,message,node=None,reason=None,evidence=None):
         if self.inference_mode:return
-        self.gaps[message]+=1;self.emit('validation-coverage',message,node,'warning')
+        self.gaps[message]+=1;record=self.emit('validation-coverage',message,node,'warning')
+        if reason or evidence:
+            from diagnostic_kinds import classify
+            classify(record,reason,evidence)
     def require_block(self,n):
         if 'children' not in n:self.emit('structure','expected a block for '+n.get('key','item'),n);return False
         return True
     def compatible(self,scope,accepted,n,label):
         if 'all' in accepted:return True
         if scope==UNKNOWN:
-            self.gap('scope cannot be inferred for '+label,n);return True
+            self.gap('scope cannot be inferred for '+label,n,'scope-type-unknown',{'operation':label,'accepted_scopes':sorted(accepted),'actual_scope':scope,'statement':{k:n[k] for k in ['key','value'] if k in n},'runtime_existence_proven':False});return True
         candidates=set(scope.split('|'))
         if candidates & set(accepted) and not candidates <= set(accepted):
-            self.gap('polymorphic scope '+scope+' for '+label,n);return True
+            self.gap('polymorphic scope '+scope+' for '+label,n,'scope-type-ambiguous',{'operation':label,'accepted_scopes':sorted(accepted),'candidate_scopes':sorted(candidates),'accepted_candidates':sorted(candidates & set(accepted)),'unproven_or_incompatible_candidates':sorted(candidates-set(accepted))});return True
         if not candidates & set(accepted):
             self.emit('scope',f'{label} accepts {", ".join(accepted)}; current scope is {scope}',n);return False
         return True
@@ -140,9 +156,22 @@ class Checker(CoverageRules):
         if number(v) is not None and not math.isfinite(number(v)):
             self.emit('value','numeric values must be finite: '+str(v),n);return
         if number(v) is None:
+            # Script values can be evaluated in another scope. Parse the typed
+            # expression BEFORE splitting any dots in its parameter values.
+            if 'value:' in v or 'modifier:' in v:
+                marker='value:' if 'value:' in v else 'modifier:'
+                prefix,_,name=v.partition(marker)
+                if prefix and not prefix.endswith('.'):
+                    self.emit('value','numeric expression scope prefix must end with a dot: '+v,n);return
+                if prefix:
+                    if ctx is None:self.gap('numeric expression context cannot be inferred: '+v,n)
+                    else:self.resolve(prefix[:-1],ctx,n)
+                if marker=='value:':self.ref('script_values',name,n)
+                elif name not in self.modifiers:self.emit('unknown-modifier','unknown numeric modifier '+name,n)
+                return
             symbol=v.removeprefix('var:')
             target=ctx
-            if ctx and '.' in symbol:
+            if ctx and scoped_numeric_variable(symbol):
                 prefix,_,symbol=symbol.rpartition('.')
                 target=self.resolve(prefix,ctx,n)
             known={self.variable_types.get((scope,symbol)) for scope in (target.current.split('|') if target else [])}
@@ -198,6 +227,7 @@ class Checker(CoverageRules):
             self.emit('localization',f'localization key `{v}` was not found in '+(language if language else 'any loaded language'),n,'warning')
     def expand(self,k,n,kind,ctx):
         definition,path=self.scripts[kind][k]
+        self.remember_script_context(kind,k,n,ctx)
         self.invoked.add((kind,k));self.expansion_trace.append({'caller':self.file,'line':n.get('line',0),'definition':path,'name':k,'scope':ctx.current,'root':ctx.root,'froms':list(ctx.froms),'prevs':list(ctx.prevs)})
         if k in self.active or len(self.active)>40:self.gap('recursive scripted call: '+k,n);return
         if 'macro_parts' in definition:
@@ -256,7 +286,9 @@ class Checker(CoverageRules):
                 self.script([{**n,'key':k[7:]}],kind,ctx);continue
             if k=='inline_script':self.expand_inline(n,kind,ctx);continue
             if k.startswith('@'):continue
-            if k in self.scripts[kind] and low not in LOGIC and k not in self.rules[kind]:self.expand(k,n,kind,ctx);continue
+            if k in self.scripts[kind] and low not in LOGIC and k not in self.rules[kind]:
+                if self.inference_mode and hasattr(self,'inference_interesting') and k not in self.inference_interesting:continue
+                self.expand(k,n,kind,ctx);continue
             if self.is_scope(k):
                 if self.require_block(n):self.script(children(n),kind,self.resolve(k,ctx,n))
                 continue
@@ -409,11 +441,33 @@ class Checker(CoverageRules):
         relocate(children(parsed['ast'][0]))
         self.active.append('inline:'+name);saved=self.file;self.file=str(path)
         self.expansion_trace.append({'caller':saved,'line':n.get('line',0),'definition':str(path),'name':'inline:'+name,'scope':ctx.current,'root':ctx.root,'froms':list(ctx.froms),'prevs':list(ctx.prevs)})
-        if handler:handler(parsed['ast'][0])
-        elif kind=='definition':self.definition(category,parsed['ast'][0])
-        else:self.script(children(parsed['ast'][0]),kind,ctx)
-        self.file=saved;self.active.pop()
+        try:
+            if handler:handler(parsed['ast'][0])
+            elif kind=='definition':self.definition(category,parsed['ast'][0])
+            else:self.script(children(parsed['ast'][0]),kind,ctx)
+        finally:self.file=saved;self.active.pop()
+    def expanded_structure(self,node,ctx):
+        """Materialize nested declaration templates once for index AND validation.
+
+        Source locations stay attached to template fields. Recursion is checked
+        while the inline invocation is still active, including nested resources.
+        """
+        result={**node};result.setdefault('_source_path',self.file)
+        if 'children' not in node:return result
+        body=[]
+        for child in children(node):
+            if child.get('key')=='inline_script':
+                def append(expanded):
+                    for entry in children(expanded):
+                        body.extend(children(self.expanded_structure({'children':[entry]},ctx)))
+                self.expand_inline(child,'declaration-materialize',ctx,handler=append)
+            else:body.append(self.expanded_structure(child,ctx))
+        result['children']=body
+        return result
     def parameters(self,k,n,kind,ctx,rule):
+        if any(c.get('key')=='inline_script' for c in children(n)):
+            return self.parameters(k,self.expanded_structure(n,ctx),kind,ctx,rule)
+        if self.extended_parameter(k,n,kind,ctx):return
         if self.handoff_parameter(k,n,kind,ctx):return
         if self.creation_contract(k,n,ctx):return
         f=fields(n)
@@ -429,7 +483,7 @@ class Checker(CoverageRules):
         if k in {'set_variable','change_variable','multiply_variable','divide_variable','subtract_variable'}:
             name=f.get('which',{}).get('value');value=f.get('value',{}).get('value')
             source=(value or '').removeprefix('var:');source_ctx=ctx
-            if '.' in source:
+            if scoped_numeric_variable(source):
                 prefix,_,source=source.rpartition('.');source_ctx=self.resolve(prefix,ctx,f.get('value',n))
             typed=all(self.variable_types.get((scope,source))=='number' for scope in source_ctx.current.split('|'))
             if name and (number(value) is not None or (value or '').startswith('trigger:') or typed):
@@ -439,12 +493,12 @@ class Checker(CoverageRules):
           'end_fleet_contract':(set(),{'initiator','reason'}),
           'set_subject_of':({'who'},{'use_demanded_terms','allow_instant_negotiation','preset'}),
           'observer_event':({'id'},{'days','random','scopes','random_days'}),
-          'spawn_planet':({'class'},{'location','orbit_location','orbit_angle_offset','orbit_distance_offset','init_effect','size','name','orbit_angle','orbit_distance','has_ring','tile_blockers','init_effects','generate_random_name','spawn_beyond_gravity_well','flags','plane_offset','deposit_blockers','modifiers'}),
-          'create_ambient_object':({'type'},{'location','scale','use_3d_location','entity_offset','entity_offset_angle','entity_offset_height','entity_face_object','entity_scale_to_size','play_animation_once','target','duration','is_wreck','base_angle_towards','effect'}),
+          'spawn_planet':({'class'},{'location','orbit_location','orbit_angle_offset','orbit_distance_offset','init_effect','size','name','orbit_angle','orbit_distance','has_ring','tile_blockers','init_effects','generate_random_name','spawn_beyond_gravity_well','flags','plane_offset','deposit_blockers','modifiers','check_overlap'}),
+          'create_ambient_object':({'type'},{'location','scale','use_3d_location','entity_offset','entity_offset_angle','entity_offset_height','entity_face_object','entity_scale_to_size','play_animation_once','target','duration','is_wreck','base_angle_towards','effect','scripted_scale','appear_state'}),
           'add_modifier':({'modifier'},{'days','months','years','mult','multiplier','time_multiplier','clear_on_owner_change'}),
           'has_resource':({'type','amount'},set()),'resource_stockpile_compare':({'resource','value'},{'mult'}),
           'is_surveyed':({'who','status'},set()),'set_surveyed':({'surveyed'},{'surveyor'}),
-          'create_fleet':(set(),{'name','effect','settings'}),'create_ship':(set(),{'name','design','prefix','suffix','random_existing_design','random_existing_design_options','graphical_culture','graphical_culture_fallback','ftl','effect','upgradable','colonizer_species','age','rarity','growth_stage','create_colony'}),
+          'create_fleet':(set(),{'name','effect','settings','parent','set_take_point'}),'create_ship':(set(),{'name','design','prefix','suffix','random_existing_design','random_existing_design_options','graphical_culture','graphical_culture_fallback','ftl','effect','upgradable','colonizer_species','age','rarity','growth_stage','create_colony'}),
           'create_megastructure':({'type'},{'location','owner','planet','build_percentage','graphical_culture','effect'}),
           'add_resource':(set(),{'mult','multiplier','cost','income','amount','resource'}|self.entities['strategic_resources']),
         }
@@ -454,16 +508,18 @@ class Checker(CoverageRules):
                 event=f['id']['value']
                 if event not in self.events:self.emit('missing-event','unknown event '+event,f['id'])
                 elif k!='observer_event' and not set(EVENT_SCOPES[k].split('|')) & set(self.events[event].split('|')):self.emit('event-type','event type mismatch: '+event,f['id'])
+                else:self.remember_event_call(event,n,ctx)
         elif k in contracts:required,optional=contracts[k]
         else:
             documented=set(rule.get('parameters',[]))
             if not documented:self.gap('parameter grammar not fully specified: '+k,n)
             for child in children(n):
                 key=child.get('key','')
+                if self.extended_child(k,child,ctx):continue
                 if key not in documented:self.gap('undocumented parameter: '+k+'/'+key,child)
                 elif key=='limit':self.script(children(child),'triggers',ctx)
                 elif key in {'effect','init_effect'}:
-                    output={'create_country':'country','create_army':'army','create_starbase':'starbase','create_ambient_object':'ambient_object','create_pop_group':'pop_group','spawn_planet':'planet','create_species':'species','create_leader':'leader','create_fleet':'fleet','create_ship':'ship'}.get(k,UNKNOWN)
+                    output={'modify_species':'species','create_country':'country','create_army':'army','create_starbase':'starbase','create_ambient_object':'ambient_object','create_pop_group':'pop_group','spawn_planet':'planet','create_species':'species','create_leader':'leader','create_fleet':'fleet','create_ship':'ship'}.get(k,UNKNOWN)
                     self.script(children(child),'effects',ctx.push(output))
                 elif key in {'amount','value','days','months','years','progress','mult','multiplier','min','max','duration','orbit_angle','orbit_distance','scale'} and 'value' in child:self.numeric(child,ctx)
                 elif key in {'trigger','potential'} and 'children' in child:self.script(children(child),'triggers',ctx)
@@ -482,6 +538,14 @@ class Checker(CoverageRules):
                 out={'create_fleet':'fleet','create_ship':'ship','create_megastructure':'megastructure','spawn_planet':'planet','create_ambient_object':'ambient_object'}.get(k,ctx.current)
                 self.script(children(child),'effects',ctx.push(out))
             elif key=='modifier':self.ref('static_modifiers',child.get('value'),child)
+            elif k in EVENT_SCOPES and key=='scopes':
+                if self.require_block(child):
+                    for override in children(child):
+                        label=override.get('key','').lower()
+                        if label!='root' and not re.fullmatch(r'(from)+',label):self.emit('unknown-field','unknown event scope override '+label,override)
+                        else:
+                            value=self.scalar(override)
+                            if value:self.resolve(value,ctx,override)
             elif key in {'resource','type'} and k in {'has_resource','resource_stockpile_compare'}:self.ref('strategic_resources',child.get('value'),child)
             elif k=='set_subject_of' and key=='who':
                 value=self.scalar(child)
@@ -496,16 +560,23 @@ class Checker(CoverageRules):
             elif key in {'age','growth_stage'}:self.numeric(child)
             elif key=='type' and k=='create_megastructure':self.ref('megastructures',child.get('value'),child)
             elif key=='class' and k=='spawn_planet':self.ref('planet_classes',child.get('value'),child)
+            elif key=='parent' and k=='create_fleet':
+                value=self.scalar(child)
+                if value is not None and value!='none':self.compatible(self.resolve(value,ctx,child).current,['fleet'],child,'create_fleet parent')
+            elif key=='appear_state' and k=='create_ambient_object':self.scalar(child)
+            elif key=='scripted_scale' and k=='create_ambient_object':self.numeric(child,ctx)
             elif key in {'entity_offset','entity_offset_angle','entity_offset_height'}:self.numeric_range(child)
             elif key in {'size','duration','scale','orbit_angle_offset','orbit_distance_offset'}:self.numeric(child)
-            elif key in {'generate_random_name','spawn_beyond_gravity_well','has_ring','use_3d_location','play_animation_once','is_wreck'}:
+            elif key in {'generate_random_name','spawn_beyond_gravity_well','has_ring','use_3d_location','play_animation_once','is_wreck','check_overlap','set_take_point'}:
                 if self.scalar(child) not in {'yes','no'}:self.emit('value',key+' expects yes/no',child)
             elif key in {'orbit_location','plane_offset','deposit_blockers','modifiers','flags'}:self.gap('creation parameter subgrammar: '+k+'/'+key,child)
             elif key in {'days','months','years','value','mult','multiplier','progress','amount'} and 'value' in child:self.numeric(child,ctx)
     def modifier(self,n,ctx,triggered=False):
+        if not self.require_block(n):return
         for child in children(n):
             k=child.get('key','')
-            if triggered and k in {'potential','trigger'}:self.script(children(child),'triggers',ctx)
+            if triggered and k in {'potential','trigger'}:
+                if self.require_block(child):self.script(children(child),'triggers',ctx)
             elif triggered and k=='modifier':self.modifier(child,ctx)
             elif k=='inline_script':self.expand_inline(child,'modifier',ctx,handler=lambda body:self.modifier(body,ctx,triggered))
             elif k in {'icon','description','custom_tooltip'}:
@@ -517,13 +588,16 @@ class Checker(CoverageRules):
             elif k not in self.modifiers:self.emit('unknown-modifier','unknown modifier '+k,child)
             else:self.numeric(child)
     def resources(self,n,ctx):
+        if not self.require_block(n):return
         for child in children(n):
             k=child.get('key')
             if k=='inline_script':self.expand_inline(child,'resources',ctx,handler=lambda body:self.resources(body,ctx))
             elif k=='category':self.ref('economic_categories',child.get('value'),child)
             elif k in {'cost','upkeep','produces','logistics'}:
+                if not self.require_block(child):continue
                 for value in children(child):
-                    if value.get('key')=='trigger':self.script(children(value),'triggers',ctx)
+                    if value.get('key')=='trigger':
+                        if self.require_block(value):self.script(children(value),'triggers',ctx)
                     elif value.get('key') in {'multiplier','mult'}:self.numeric(value)
                     else:self.ref('strategic_resources',value.get('key'),value);self.numeric(value,ctx)
             else:self.emit('unknown-field','resources: unknown field '+str(k),child)
@@ -547,6 +621,14 @@ class Checker(CoverageRules):
         else:self.gap('declaration subgrammar requires review: '+category+'/'+k,child)
         self.checked['native_declaration_fields']+=1
         return True
+    def reference_list(self,n,category,logical=False):
+        if not self.require_block(n):return
+        for entry in children(n):
+            key=entry.get('key')
+            if logical and key in {'OR','AND','or','and'}:self.reference_list(entry,category,True)
+            elif key=='inline_script':self.expand_inline(entry,'reference-list',Context('none','none'),handler=lambda body:self.reference_list(body,category,logical))
+            elif 'key' in entry or 'children' in entry:self.emit('structure',n.get('key','reference list')+' expects scalar references or documented AND/OR groups',entry)
+            else:self.ref(category,self.scalar(entry),entry)
     def definition(self,category,n):
         if category in {'scripted_triggers','scripted_effects','scripted_variables'}:return
         if category=='events':self.event(n);return
@@ -574,7 +656,9 @@ class Checker(CoverageRules):
             if category=='special_projects' and k in {'on_success','on_start','on_progress_25','on_progress_50','on_progress_75','on_fail','on_cancel','abort_trigger','fail_trigger'}:
                 location=self.project_locations.get(fields(n).get('key',{}).get('value',n.get('key')),'?')
                 success=k in {'on_success','on_start','on_progress_25','on_progress_50','on_progress_75'}
-                callback=Context(scope,scope,(location,),('country',)) if success else Context('country','country',(scope,location))
+                # documentation.txt defines THIS/FROM/PREV, but does not
+                # specify ROOT. Do not export an invented ROOT into events.
+                callback=Context(scope,UNKNOWN,(location,),('country',)) if success else Context('country',UNKNOWN,(scope,location))
                 self.script(children(child),'triggers' if k.endswith('trigger') else 'effects',callback);continue
             if k=='inline_script':self.expand_inline(child,'definition',ctx,category);continue
             if category=='section_templates' and k=='component_slot':
@@ -596,14 +680,17 @@ class Checker(CoverageRules):
                 continue
             if k in {'prerequisites','upgrade_from','upgrades'}:
                 target='technology' if k=='prerequisites' else category
-                for v in values(child):self.ref(target,v,child)
+                self.reference_list(child,target,k=='prerequisites')
             elif k=='resources':self.resources(child,Context('ship|ship_growth_stage','ship|ship_growth_stage',('country',)) if category=='ship_sizes' else ctx)
             elif k in {'ai_weight','ai_weights','weight_modifier','ai_allow','ai_chance','weight'}:
                 wc=Context('country','country') if category=='component_templates' else ctx
                 self.weighted(child,'triggers',wc)
             elif k in {'country_modifier','planet_modifier','system_modifier','modifier','pop_modifier','ship_modifier','triggered_ship_modifier','triggered_ship_design_modifier','triggered_country_modifier','triggered_planet_modifier','triggered_pop_modifier','triggered_modifier'}:
                 mc=Context('megastructure','megastructure') if category=='megastructures' and k.startswith('triggered_') else ctx
+                if category=='component_templates' and k=='triggered_ship_design_modifier':mc=Context('design','design',('country',))
                 self.modifier(child,mc,k.startswith('triggered_'))
+            elif category=='component_templates' and k in {'potential','possible'}:
+                if self.require_block(child):self.script(children(child),'triggers',Context('design','design',('country',)))
             elif category=='megastructures' and k in {'possible','context_menu_potential','potential','dismantle_potential','dismantle_possible','should_ai_dismantle'}:
                 s='country' if k=='potential' else ('megastructure' if 'dismantle' in k else 'galactic_object')
                 self.script(children(child),'triggers',Context(s,s,('fleet',) if k=='potential' else ('country','fleet')))
@@ -646,8 +733,11 @@ class Checker(CoverageRules):
         # A scope-free event has no initial THIS object. The installed export
         # does not define how ROOT is initialized when entering its first
         # object iteration; do not invent a permanent, known-invalid none ROOT.
-        ctx=Context(scope,UNKNOWN if scope=='none' else scope)
-        self.event_body({'children':self.inherited_event_fields(n)},ctx)
+        name=fields(n).get('id',{}).get('value');saved=self.targets
+        for variant in self.event_variants(name,scope,fields(n).get('is_triggered_only',{}).get('value')=='yes'):
+            self.targets=dict(variant['targets'])
+            self.event_body({'children':self.inherited_event_fields(n)},variant['context'])
+        self.targets=saved
     def inherited_event_fields(self,n,seen=()):
         local=children(n);base=fields(n).get('base');result=[]
         if base:
@@ -666,19 +756,36 @@ class Checker(CoverageRules):
         replacements={x.get('key') for x in local if 'value' in x}
         result=[x for x in result if x.get('key') not in clears|replacements|{'base'}]
         return result+[x for x in local if x.get('key')!='base']
+    def conditional_picture(self,n,ctx):
+        if not self.require_block(n):return
+        for item in children(n):
+            key=item.get('key')
+            if key=='trigger':
+                if self.require_block(item):self.script(children(item),'triggers',ctx)
+            elif key=='picture':
+                if 'children' in item:self.conditional_picture(item,ctx)
+                else:self.scalar(item)
+            elif key=='inline_script':self.expand_inline(item,'conditional-picture',ctx,handler=lambda body:self.conditional_picture(body,ctx))
+            else:self.emit('unknown-field','unknown conditional picture field '+str(key),item)
+    def option_icon(self,n,ctx):
+        if 'children' not in n:self.scalar(n);return
+        for item in children(n):
+            key=item.get('key')
+            if key in {'icon','icon_background'}:self.scalar(item)
+            elif key=='text':self.localisation(item)
+            elif key=='trigger':
+                if self.require_block(item):self.script(children(item),'triggers',ctx)
+            elif key=='inline_script':self.expand_inline(item,'option-icon',ctx,handler=lambda body:self.option_icon(body,ctx))
+            else:self.emit('unknown-field','unknown option icon field '+str(key),item)
     def event_body(self,n,ctx):
-        scalar=set('id title desc picture location show_sound hide_window is_triggered_only fire_only_once major major_triggered_only diplomatic notification auto_opens duration show_on_map_trigger immediate_only keep_deposit_effects_in_description diplomatic_title event_window_type situation event_chain archaeology force_open specimen auto_select trackable is_advisor_event is_test_event event_picture_background notification_event_icon event_message_type message_desc difficulty astral_rift first_contact espionage_operation'.split())
+        scalar=set('id title desc picture location show_sound hide_window is_triggered_only fire_only_once major major_triggered_only diplomatic notification auto_opens duration show_on_map_trigger immediate_only keep_deposit_effects_in_description diplomatic_title event_window_type situation event_chain archaeology force_open specimen auto_select trackable is_advisor_event is_test_event event_picture_background notification_event_icon notification_event_icon_frame event_message_type message_desc difficulty astral_rift first_contact espionage_operation'.split())
         booleans={'hide_window','is_triggered_only','fire_only_once','major','major_triggered_only','diplomatic','notification','auto_opens','trackable','is_advisor_event','is_test_event','astral_rift','first_contact','espionage_operation'}
         clearable={'desc','option','trigger','picture','show_sound','title','immediate','after'}
         for child in children(n):
             name=child.get('key','')
             if name=='inline_script':self.expand_inline(child,'event-body',ctx,handler=lambda body:self.event_body(body,ctx))
             elif name=='trigger':self.script(children(child),'triggers',ctx)
-            elif name=='picture' and 'children' in child:
-                for item in children(child):
-                    if item.get('key')=='trigger':self.script(children(item),'triggers',ctx)
-                    elif item.get('key')=='picture':self.scalar(item)
-                    else:self.emit('unknown-field','unknown conditional picture field '+str(item.get('key')),item)
+            elif name=='picture' and 'children' in child:self.conditional_picture(child,ctx)
             elif name=='triggered_desc':self.description(child,ctx)
             elif name.endswith('_clear') and name[:-6] in clearable:
                 if self.scalar(child) not in {'yes','no'}:self.emit('value',name+' expects yes/no',child)
@@ -697,16 +804,19 @@ class Checker(CoverageRules):
                     if key in {'name','custom_tooltip'}:self.localisation(opt)
                     elif key in {'trigger','allow','highlight','exclusive_trigger'}:self.script(children(opt),'triggers',ctx)
                     elif key=='ai_chance':self.weighted(opt,'triggers',ctx)
-                    elif key in {'default_hide_option','is_dialog_only','response_text','sound','show_sound','icon','default','tag'}:continue
+                    elif key in {'default_hide_option','is_dialog_only','hide_option_if_not_allowed','default'}:self.boolean(opt)
+                    elif key=='icon':self.option_icon(opt,ctx)
+                    elif key in {'response_text','sound','show_sound','tag'}:self.scalar(opt)
                     else:self.script([opt],'effects',ctx)
             elif name in scalar:
                 if name in {'title','desc','message_desc'}:self.description(child,ctx)
                 elif name in booleans:
                     if self.scalar(child) not in {'yes','no'}:self.emit('value',name+' expects yes/no',child)
-                elif name in {'difficulty','duration'}:self.numeric(child)
+                elif name in {'difficulty','duration','notification_event_icon_frame'}:self.numeric(child)
                 elif 'children' in child:self.gap('event metadata subgrammar: '+name,child)
             elif name in {'mean_time_to_happen','weight_multiplier'}:self.weighted(child,'triggers',ctx)
-            elif name in {'picture_event_data','sound','pre_triggers','custom_gui','custom_gui_option'}:self.gap('event subgrammar: '+name,child)
+            elif name=='picture_event_data':self.picture_event_data(child,ctx)
+            elif name in {'sound','pre_triggers','custom_gui','custom_gui_option'}:self.gap('event subgrammar: '+name,child)
             else:self.emit('unknown-field','event: unknown field '+name,child)
     def description(self,n,ctx):
         if 'value' in n:self.localisation(n);return
@@ -841,6 +951,12 @@ def load(checker,game,mods,cache=None):
     target=[];checker.file_records=[];economic=[];initializers={};checker.syntax_files=len(result)
     for rel,p in final.items():
         item=result[str(p)];ast=item['ast'];category=rel.split('/')[1] if rel.startswith('common/') else rel.split('/')[0]
+        if category=='component_templates':
+            saved_file=checker.file;checker.file=str(p);diag_start=len(checker.diagnostics)
+            ast=[checker.expanded_structure(n,Context('ship','ship',('country',))) for n in ast]
+            if p not in target_paths:
+                checker.vanilla_parse_diagnostics.extend(dict(d,source='component-template-materialize') for d in checker.diagnostics[diag_start:]);del checker.diagnostics[diag_start:]
+            checker.file=saved_file
         if category in {'gfx','interface'}:checker.index_graphics(ast,str(p))
         if rel.startswith(('common/governments/','common/patrons/')):category='/'.join(rel.split('/')[1:-1])
         checker.file_records.append((str(p),category,ast))
@@ -864,15 +980,6 @@ def load(checker,game,mods,cache=None):
             elif category in {'scripted_effects','scripted_triggers'}:
                 checker.scripts['effects' if category=='scripted_effects' else 'triggers'][key]=(n,str(p));checker.entities[category].add(key)
             else:
-                if category=='component_templates':
-                    expanded=[];saved_file=checker.file;checker.file=str(p);diag_start=len(checker.diagnostics)
-                    for field in children(n):
-                        if field.get('key')=='inline_script':checker.expand_inline(field,'component-index',Context('ship','ship',('country',)),handler=lambda body:expanded.extend(children(body)))
-                        else:expanded.append(field)
-                    n={**n,'children':expanded}
-                    if p not in target_paths:
-                        checker.vanilla_parse_diagnostics.extend(dict(d,source='component-template-index') for d in checker.diagnostics[diag_start:]);del checker.diagnostics[diag_start:]
-                    checker.file=saved_file
                 identifier=fields(n).get('key',{}).get('value',key) if category in {'component_sets','component_templates','section_templates','special_projects'} else key
                 if category=='global_ship_designs':identifier=fields(n).get('name',{}).get('value',identifier)
                 checker.entities[category].add(identifier)
@@ -910,12 +1017,19 @@ def analyze(checker,target,args):
     inference_iterations=0
     if not args.syntax_only:
         checker.inference_mode=True
+        discovery=checker.discovery_roots(target)
         # Conservative call-graph filtering: a root without a direct global
         # writer, a writer script, any macro, or any inline expansion cannot
         # contribute type facts. Final semantic validation still visits all.
         writers=set()
         def can_write(node):
-            if 'macro_parts' in node or node.get('key') in {'save_global_event_target_as','enable_special_project','inline_script'}|writers:return True
+            keys={'save_event_target_as','save_global_event_target_as','enable_special_project','inline_script'}|set(EVENT_SCOPES)|writers|getattr(checker,'discovery_needed',set())
+            if node.get('key')=='arrival_effect' and node.get('value') in keys:return True
+            if 'macro_parts' in node:
+                source=''.join('$'+p['text']+'$' if p['parameter'] else p['text'] for p in node['macro_parts'])
+                tokens=set(re.findall(r'([\w.$]+)\s*=',source))
+                return bool(tokens&keys) or any('$' in token for token in tokens)
+            if node.get('key') in keys:return True
             return any(can_write(child) for child in children(node))
         definitions=[(name,node) for group in checker.scripts.values() for name,(node,_) in group.items()]
         while True:
@@ -923,17 +1037,20 @@ def analyze(checker,target,args):
             if updated==writers:break
             writers=updated
         inference_target=[(path,category,[node for node in ast if can_write(node)]) for path,category,ast in target]
+        checker.inference_interesting=writers|getattr(checker,'discovery_needed',set())
         for iteration in range(16):
+            old_events=checker.event_contexts;checker.next_event_contexts={};checker.script_contexts={}
             old_projects=checker.project_locations.copy();old=checker.global_targets.copy();old_unknown=checker.global_unknown_targets.copy();checker.global_unknown_targets.clear()
-            for path,category,ast in inference_target:
+            for path,category,ast in inference_target+discovery:
                 checker.file=path
                 if category in {'gfx','interface'}:continue
                 for n in ast:
                     checker.targets={};checker.definition(category,n)
             inference_iterations=iteration+1
-            if checker.global_targets==old and checker.global_unknown_targets==old_unknown and checker.project_locations==old_projects:break
+            checker.event_contexts=checker.joined_event_contexts()
+            if checker.global_targets==old and checker.global_unknown_targets==old_unknown and checker.project_locations==old_projects and checker.event_contexts==old_events:break
         checker.inference_mode=False;checker.checked.clear();checker.expansion_trace.clear();checker.invoked.clear()
-        if inference_iterations==16 and (checker.global_targets!=old or checker.global_unknown_targets!=old_unknown):checker.gap('global target inference did not converge')
+        if inference_iterations==16 and (checker.global_targets!=old or checker.global_unknown_targets!=old_unknown or checker.event_contexts!=old_events or checker.project_locations!=old_projects):checker.gap('context/target inference did not converge within 16 iterations')
     for path,category,ast in target:
         checker.file=path
         if args.syntax_only:continue
@@ -954,6 +1071,7 @@ def analyze(checker,target,args):
                     entry=checker.engine_contract(name,kind,node)
                     if entry:
                         checker.script(children(node),kind,entry);continue
+                    if checker.check_script_contexts(kind,name,node):continue
                     checker.uninvoked_mod_scripts.append({'kind':kind,'name':name,'path':path,'line':node.get('line',0)})
                     checker.file=path
                     contract=checker.infer_script_inputs(node,kind)
@@ -1012,9 +1130,17 @@ def run(args):
         controls={'mode':'fresh_native_counterparts_and_reached_calls','complete_vanilla_semantic_check':False,'selected_files':[p for p,_,_ in native_target],'rules_sha256':hashlib.sha256(args.rules.read_bytes()).hexdigest(),'declarations_sha256':binding(control,args)['declarations_sha256'],'input_manifest':control.input_manifest,'diagnostics':control.diagnostics,'game_version':version,'dependencies':[str(p) for p in args.dependency]}
     errors=sum(d['severity'] in {'error','fatal'} for d in checker.diagnostics)
     warnings=sum(d['severity']=='warning' for d in checker.diagnostics)
-    report={'tool':'Tiger Stellar','tool_version':VERSION,'game_version':version,'rules_sha256':hashlib.sha256(args.rules.read_bytes()).hexdigest(),'upstream_commit':'9e3d3b25c7524cdcc86d5f4190f3f8cffbc4d630','status':'empty_input_not_validation' if input_state!='script-targets' else ('errors' if errors else ('warnings_require_review' if warnings else 'static_checks_pass')),'input_state':input_state,'full_dsl_validated':False,'validation_mode':'syntax-only' if args.syntax_only else 'bounded-semantic','errors':errors,'warnings':warnings,'syntax_files':checker.syntax_files,'template_files':checker.template_files,'target_files':len(target),'checked_statements':dict(checker.checked),'coverage_gaps':dict(checker.gaps),'uninvoked_mod_scripts':checker.uninvoked_mod_scripts,'inference_iterations':inference_iterations,'global_target_types':checker.global_targets,'project_location_types':checker.project_locations,'inferred_script_inputs':checker.inferred_script_inputs,'scope_free_event_root_policy':'unknown ROOT; THIS remains none; engine contract not verified','numeric_variable_types':[{'scope_type':s,'name':n,'type':t,'availability_proven':False} for (s,n),t in sorted(checker.variable_types.items())],'expansion_trace':checker.expansion_trace,'engine_not_run':True,'elapsed_seconds':round(time.monotonic()-start,2),'diagnostics':sorted(checker.diagnostics,key=lambda d:(d['path'],d['line'],d['column'],d['key'])),'baseline_parse_diagnostics':checker.vanilla_parse_diagnostics,'input_manifest':checker.input_manifest,'rules_provenance':rules['sources']}
+    report={'tool':'Tiger Stellar','tool_version':VERSION,'game_version':version,'rules_sha256':hashlib.sha256(args.rules.read_bytes()).hexdigest(),'upstream_commit':'9e3d3b25c7524cdcc86d5f4190f3f8cffbc4d630','status':'empty_input_not_validation' if input_state!='script-targets' else ('errors' if errors else ('warnings_require_review' if warnings else 'static_checks_pass')),'input_state':input_state,'full_dsl_validated':False,'validation_mode':'syntax-only' if args.syntax_only else 'bounded-semantic','errors':errors,'warnings':warnings,'syntax_files':checker.syntax_files,'template_files':checker.template_files,'target_files':len(target),'checked_statements':dict(checker.checked),'coverage_gaps':dict(checker.gaps),'uninvoked_mod_scripts':checker.uninvoked_mod_scripts,'inference_iterations':inference_iterations,'global_target_types':checker.global_targets,'project_location_types':checker.project_locations,'inferred_script_inputs':checker.inferred_script_inputs,'scope_free_event_root_policy':'unknown ROOT; THIS remains none; engine contract not verified','numeric_variable_types':[{'scope_type':s,'name':n,'type':t,'availability_proven':False} for (s,n),t in sorted(checker.variable_types.items())],'expansion_trace':checker.expansion_trace,'engine_not_run':True,'elapsed_seconds':round(time.monotonic()-start,2),'diagnostics':sorted(checker.diagnostics,key=lambda d:(d['path'],d['line'],d['column'],d['key'],d['message'],d['severity'])),'baseline_parse_diagnostics':checker.vanilla_parse_diagnostics,'input_manifest':checker.input_manifest,'rules_provenance':rules['sources']}
     report.update(binding=binding(checker,args),native_control=controls,engine_entries=checker.engine_entries,ship_feasibility=getattr(checker,'ship_feasibility',[]),coverage_summary=coverage_summary(checker),checked_statements_scope='counts of visits in target files and reached expansions, not unique source coverage and not a percentage',selected_language=getattr(args,'language',None),localisation_duplicates=getattr(checker,'localisation_duplicates',[]))
     report.update(project_constraints=policy,overrides_report=str(args.overrides_output) if getattr(args,'overrides_output',None) else None)
+    report.update(context_flow=checker.flow_report(),component_potential_proofs=getattr(checker,'potential_proofs',[]))
+    from diagnostic_kinds import summary
+    from diagnostic_kinds import classify
+    for diagnostic in checker.vanilla_parse_diagnostics:
+        if 'reason' not in diagnostic:classify(diagnostic)
+    if controls:controls['warning_summary']=summary(controls['diagnostics'])
+    report.update(diagnostic_schema_version=2,warning_summary=summary(report['diagnostics']),diagnostic_reason_policy='Reason class describes checker evidence; no severity changes or suppression; unresolved information is not proof of runtime validity.')
+    report['warning_summary_scope']='Unique target/reached warning diagnostics only; excludes separately recorded baseline parse diagnostics; not statement visits or coverage percentage.'
     if getattr(args,'compare_report',None):report['diagnostic_delta']=diagnostic_delta(report,json.loads(args.compare_report.read_text(encoding='utf8')))
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf8')
     print(json.dumps({k:report[k] for k in ['tool','status','errors','warnings','syntax_files','target_files','elapsed_seconds']},ensure_ascii=False))

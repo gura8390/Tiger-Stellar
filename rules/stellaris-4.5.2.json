@@ -17316,7 +17316,8 @@
         "sector",
         "colony"
       ],
-      "description": "Weighted random on owned popgroups based on the popgroup size. Supports the same scopes as the owned_pop_group script list\r\nSupported Scopes: planet country ship galactic_object pop_faction sector colony"
+      "description": "Weighted random on owned popgroups based on the popgroup size. Supports the same scopes as the owned_pop_group script list\r\nSupported Scopes: planet country ship galactic_object pop_faction sector colony",
+      "iterator_output": "pop_group"
     },
     "set_trade_conversions": {
       "input": [
