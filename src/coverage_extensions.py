@@ -49,6 +49,21 @@ class CoverageExtensions:
  def extended_child(self,k,c,ctx):
   from stellar import children,fields
   key=c.get('key')
+  if k=='set_agreement_terms' and key in self.entities.get('agreement_terms',set()):
+   value=self.scalar(c)
+   if value:self.ref('agreement_term_values',value,c)
+   if value in self.definitions.get('agreement_term_values',{}):
+    term=fields(self.definitions['agreement_term_values'][value]).get('term',{}).get('value')
+    if term!=key:self.emit('value','agreement term value '+value+' belongs to '+str(term)+', not '+key,c)
+   return True
+  if k=='create_country' and key=='name' and 'children' in c:
+   if 'key' not in fields(c):self.emit('missing-field','country name block requires key',c)
+   for x in children(c):
+    a=x.get('key')
+    if a=='key':self.localisation(x)
+    elif a=='variable_string':self.scalar(x) # runtime text substitution
+    else:self.gap('country name substitution grammar not implemented: '+str(a),x,'rule-unimplemented')
+   return True
   if k=='modify_species' and key in {'add_trait','remove_trait'}:
    self.ref('traits',self.scalar(c),c);return True
   if k=='start_situation' and key=='effect':
@@ -159,10 +174,14 @@ class CoverageExtensions:
    if k not in {'portrait','planet_background','graphical_culture','city_level','room'}:
     self.gap('picture_event_data unmodeled selector: '+str(k),c);continue
    if not v:continue
-   # Installed native counterparts use country selectors for these five fields.
-   # Other literal/object forms have no verified contract here.
-   if v.lower() in {'root','from','this','prev'} or ':' in v or '.' in v:
+   # Installed event callers use countries/leaders as portraits and
+   # countries/planets as backgrounds; literal room path is documented in
+   # asset_selectors/room_textures.txt. No claim of rendering validation.
+   if self.is_scope(v):
     typ=self.resolve(v,ctx,c).current
-    if typ!='country':self.gap('picture_event_data selector contract: '+str(k)+'/'+typ,c,'scope-type-unknown' if typ=='?' else 'engine-contract-unverified',{'selector':v,'selector_type':typ,'verified_country_form':True,'other_forms_verified':False})
-    else:self.checked['picture_country_selectors']+=1
+    accepted={'portrait':{'country','leader'},'planet_background':{'country','planet'},'graphical_culture':{'country'},'city_level':{'country'},'room':{'country'}}[k]
+    if set(typ.split('|'))<=accepted:self.checked['picture_country_selectors']+=1
+    else:self.gap('picture_event_data selector contract: '+str(k)+'/'+typ,c,'scope-type-unknown' if typ=='?' else 'engine-contract-unverified',{'selector':v,'selector_type':typ,'verified_selector_types':sorted(accepted),'other_forms_verified':False})
+   elif k=='portrait':self.ref('gfx_portrait',v,c)
+   elif k=='room':self.asset_reference('gfx/portraits/city_sets/'+v+'.dds',c)
    else:self.gap('picture_event_data literal selector: '+str(k),c)

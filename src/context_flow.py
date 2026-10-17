@@ -40,6 +40,7 @@ class ContextFlow:
    k=n.get('key','');v=n.get('value','')
    if k=='save_global_event_target_as' and v.split('@')[0] in referenced:return True
    if k.endswith('_event') and any(c.get('key')=='id' and c.get('value') in wanted_events for c in children(n)):return True
+   if k in {'events','random_events'} and any(c.get('value') in wanted_events for c in children(n)):return True
    return any(supplies(c) for c in children(n))
   # Writer scripts need their callers, not an invented standalone context.
   writer_scripts={name for group in self.scripts.values() for name,(n,_) in group.items() if supplies(n)}
@@ -90,7 +91,7 @@ class ContextFlow:
   joined={}
   for name,records in self.next_event_contexts.items():
    rows=list(records.values());depth=max(len(r['context'].froms) for r in rows)
-   ctx=Context(union(r['context'].current for r in rows),union(r['context'].root for r in rows),tuple(union(r['context'].froms[i] for r in rows if len(r['context'].froms)>i) for i in range(depth)))
+   ctx=Context(union(r['context'].current for r in rows),union(r['context'].root for r in rows),tuple(union(r['context'].froms[i] if len(r['context'].froms)>i else UNKNOWN for r in rows) for i in range(depth)))
    names=set().union(*(set(r['targets']) for r in rows));targets={k:union(r['targets'][k] for r in rows if k in r['targets']) for k in sorted(names)}
    joined[name]={'merged':{'context':ctx,'targets':targets,'caller':'<joined scripted callers>','line':0}}
   self.event_call_evidence=self.next_event_contexts
@@ -117,4 +118,4 @@ class ContextFlow:
 
  def flow_report(self):
   def context(ctx):return {'this':ctx.current,'root':ctx.root,'froms':list(ctx.froms),'prevs':list(ctx.prevs)}
-  return {'discovery':getattr(self,'discovery_summary',{}),'event_inputs':{k:[{'context':context(r['context']),'caller':r['caller'],'line':r['line'],'target_types':r['targets'],'runtime_availability_proven':False} for r in sorted(v.values(),key=lambda r:(repr(r['context']),r['caller'],r['line']))] for k,v in sorted(getattr(self,'event_call_evidence',self.event_contexts).items())},'script_inputs':{kind+':'+name:[{'context':context(r['context']),'caller':r['caller'],'line':r['line']} for r in sorted(records.values(),key=lambda r:(repr(r['context']),r['caller'],r['line']))] for (kind,name),records in sorted(self.script_contexts.items()) if self.scripts[kind][name][1] in self.mod_files},'from_depth_bound':6,'runtime_availability_proven':False}
+  return {'discovery':getattr(self,'discovery_summary',{}),'event_inputs':{k:[{'context':context(r['context']),'caller':r['caller'],'line':r['line'],'target_types':r['targets'],'runtime_availability_proven':False,'source_kind':r.get('source_kind','scripted event call'),'engine_input_context':r.get('engine_input_context')} for r in sorted(v.values(),key=lambda r:(repr(r['context']),r['caller'],r['line']))] for k,v in sorted(getattr(self,'event_call_evidence',self.event_contexts).items())},'script_inputs':{kind+':'+name:[{'context':context(r['context']),'caller':r['caller'],'line':r['line']} for r in sorted(records.values(),key=lambda r:(repr(r['context']),r['caller'],r['line']))] for (kind,name),records in sorted(self.script_contexts.items()) if self.scripts[kind][name][1] in self.mod_files},'from_depth_bound':6,'runtime_availability_proven':False}

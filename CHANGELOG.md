@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.8 — 2026-10-17
+
+- Added implicit AND and scripted type-guard narrowing, retaining uncertainty for unsupported or recursive guards.
+- Checked ordinary and weighted on_action event lists and propagated preset FROM context; missing context in one caller remains unknown rather than borrowing another caller's type.
+- Extended event-picture resource references, special-project condition descriptions, and agreement-term value checks.
+- Retained the existing JSON output, severity and diagnostic keys. Added targeted positive and negative regression tests.
+
+中文：补隐式 AND 与脚本类型守卫、on_action 事件列表和预设 FROM 传播、事件图片资源、特殊项目条件描述及协议条款值检查；保留未知上下文和现有诊断格式。
+
 ## 0.1.7 — 2026-10-17
 
 - Refined warning reasons and scope evidence in the existing JSON output while retaining the original severity and diagnostic keys.
@@ -19,4 +28,4 @@
 
 Published source is checked with the standalone parser workspace and synthetic regression tests. Vanilla scans can complete, but retained errors and coverage warnings remain; completion does not mean full semantic coverage or zero false positives. Static checks do not establish engine, gameplay, or save-game acceptance.
 
-0.1.7 validation is targeted; a new full vanilla scan is not claimed for this release.
+0.1.8 validation is targeted; a new full vanilla scan is not claimed for this release.

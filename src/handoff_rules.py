@@ -6,11 +6,20 @@ class HandoffRules:
         from stellar import children,UNKNOWN
         from stellar_scopes import ENGINE_SCOPE_TYPES
         possible=(set(ENGINE_SCOPE_TYPES)-{'all','various','no_scope'}) if ctx.current==UNKNOWN else set(ctx.current.split('|'))
-        def predicate(item,domain):
+        def predicate(item,domain,active=()):
             k=item.get('key','').lower();v=item.get('value')
             if k=='is_scope_type' and v in ENGINE_SCOPE_TYPES:return domain & {v},True
+            name=item.get('key','')
+            if name in self.scripts['triggers'] and v in {'yes','no'} and name not in active:
+                definition,_=self.scripts['triggers'][name]
+                if 'macro_parts' not in definition and len(active)<20:
+                    parts=[predicate(x,domain,active+(name,)) for x in children(definition)]
+                    selected=set.intersection(*(part[0] for part in parts)) if parts else set(domain)
+                    exact=all(part[1] for part in parts)
+                    if v=='no':return (domain-selected,True) if exact else (set(domain),False)
+                    return selected,exact
             if k in {'and','limit','hidden_trigger','custom_tooltip','custom_tooltip_with_modifiers','or','not','nor'}:
-                parts=[predicate(x,domain) for x in children(item) if x.get('key') not in {'text','fail_text','success_text'}]
+                parts=[predicate(x,domain,active) for x in children(item) if x.get('key') not in {'text','fail_text','success_text'}]
                 if not parts:return set(domain),False
                 result=set.union(*(part[0] for part in parts)) if k in {'or','nor'} else set.intersection(*(part[0] for part in parts))
                 exact=all(part[1] for part in parts)

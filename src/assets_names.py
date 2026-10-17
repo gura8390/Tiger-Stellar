@@ -48,6 +48,7 @@ class AssetsNames:
         def walk(nodes):
             for n in nodes:
                 kind=n.get('key','').lower()
+                if kind=='portraits':self.entities['gfx_portrait'].update(c['key'] for c in children(n) if c.get('key') and not c['key'].startswith('@'))
                 if kind in {'spritetype','pdxmesh','entity'}:
                     name=fields(n).get('name',{}).get('value')
                     if name:self.entities['gfx_'+kind].add(name)

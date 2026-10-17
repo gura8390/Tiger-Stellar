@@ -1,4 +1,4 @@
-# Tiger Stellar 0.1.7
+# Tiger Stellar 0.1.8
 
 A Windows static checker for **Stellaris Cygnus 4.5.2 (9776)** mods, with a Tiger-derived Rust syntax parser and a separate Python semantic checker.
 
@@ -6,7 +6,9 @@ A Windows static checker for **Stellaris Cygnus 4.5.2 (9776)** mods, with a Tige
 
 ## Latest changes / 最新变化
 
-**0.1.7** adds more precise warning reasons and scope evidence in JSON, plus fleet action queues, situation creation, arrival callbacks, parameterized inline scripts, and selected reference checks. It also includes the crash, asset-path, and semantic coverage fixes from 0.1.5–0.1.6. See [CHANGELOG.md](CHANGELOG.md) for details and validation limits.
+**0.1.8** improves implicit AND and scripted type-guard narrowing, on_action event lists and preset FROM propagation, event-picture resource references, special-project condition descriptions, and agreement-term values. Missing FROM context remains unknown across multiple callers. Existing JSON, severity and diagnostic keys are retained. See [CHANGELOG.md](CHANGELOG.md) for details and validation limits.
+
+中文：补充隐式 AND 与脚本类型守卫收窄、on_action 普通／加权事件列表及预设 FROM 传播，以及事件图片、特殊项目条件描述和协议条款值引用。多个调用入口缺少 FROM 时保留未知，不借用其他入口的类型。
 
 ## Credits and thanks / 致谢
 
@@ -58,6 +60,6 @@ This repository contains runnable source, rules, synthetic regression fixtures, 
 | Stellaris rules | Versioned Stellaris 4.5.2 scope/API and declaration tables. |
 | Semantic checker | Layered definitions, references, scope checks, scripted calls, component/ship contracts and localization checks in Python. |
 | Diagnostics | Targeted vanilla comparisons, provenance, override reports and explicit coverage warnings. |
-| Regression suite | 352 source-level tests and 9 Rust parser tests passed for the 0.1.7 publication; no in-game acceptance is implied. |
+| Regression suite | 394 source-level tests and 9 Rust parser tests passed for the 0.1.8 publication; no in-game acceptance is implied. |
 
 This repository currently publishes source rather than binary Release downloads. For the separate CK3 adaptation, see [Tiger CK3](https://github.com/gura8390/Tiger-CK3).

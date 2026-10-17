@@ -15,7 +15,7 @@ from coverage_rules import CoverageRules
 # must refer to this same module and Context type, not a second imported copy.
 if __name__=='__main__':sys.modules['stellar']=sys.modules[__name__]
 
-VERSION='0.1.7'
+VERSION='0.1.8'
 UNKNOWN='?'
 def children(n): return n.get('children',[])
 def fields(n): return {x.get('key'):x for x in children(n) if 'key' in x}
@@ -275,7 +275,17 @@ class Checker(CoverageRules):
         self.active.append(k);saved=self.file;self.file=path
         self.script(body,kind,ctx)
         self.file=saved;self.active.pop()
-    def script(self,body,kind,ctx):
+    def script(self,body,kind,ctx,conjunctive=True):
+        # Trigger lists are implicit AND. OR/NOR alternatives must retain the
+        # original domain instead of borrowing another alternative's guard.
+        if kind=='triggers' and conjunctive:
+            narrowed=self.narrow(body,ctx)
+            if narrowed is not None:
+                if narrowed!=ctx and not self.inference_mode:
+                    frames=getattr(self,'validation_frames',[])
+                    if frames and frames[-1].get('kind')=='script':
+                        frame=frames[-1];frame['input_context']=frame.get('context');frame['context']={'this':narrowed.current,'root':narrowed.root,'froms':list(narrowed.froms),'prevs':list(narrowed.prevs)}
+                ctx=narrowed
         false_ctx=ctx
         for n in body:
             if 'key' not in n:
@@ -314,7 +324,7 @@ class Checker(CoverageRules):
                         if low not in {'if','else_if'}:self.script(children(child),'triggers',ctx)
                     elif low=='while' and child.get('key')=='count':self.numeric(child,ctx)
                     else:statements.append(child)
-                self.script(statements,kind,nested)
+                self.script(statements,kind,nested,conjunctive=low not in {'or','nor'})
                 continue
             if low=='limit':
                 if self.require_block(n):self.script(children(n),'triggers',ctx)
@@ -710,8 +720,7 @@ class Checker(CoverageRules):
             elif k in {'potential','allow','possible','trigger','destroy_trigger','active','visible','is_valid','can_use','ai_allow','abort_trigger','fail_trigger','valid_for_country'} and 'children' in child:self.script(children(child),'triggers',Context('country','country') if k=='valid_for_country' or (category=='special_projects' and k=='abort_trigger') else ctx)
             elif k in {'effect','on_queued','on_unqueued','on_built','on_destroy','on_destroyed','on_enabled','on_disabled','on_build_complete','on_research_complete','on_success','on_fail','on_cancel','on_start','on_progress_25','on_progress_50','on_progress_75'}:self.script(children(child),'effects',ctx)
             elif category=='on_actions' and k in {'events','random_events'}:
-                for v in values(child):
-                    if v not in self.events:self.emit('missing-event','unknown event '+v,child)
+                self.on_action_events(child,ctx)
             elif category=='on_actions' and k=='effect':self.script(children(child),'effects',ctx)
             elif (category=='megastructures' and k in mega_scalar) or (category=='buildings' and k in building_scalar):
                 if k.startswith('custom_tooltip'):self.localisation(child)
@@ -1023,7 +1032,7 @@ def analyze(checker,target,args):
         # contribute type facts. Final semantic validation still visits all.
         writers=set()
         def can_write(node):
-            keys={'save_event_target_as','save_global_event_target_as','enable_special_project','inline_script'}|set(EVENT_SCOPES)|writers|getattr(checker,'discovery_needed',set())
+            keys={'save_event_target_as','save_global_event_target_as','enable_special_project','inline_script','events','random_events'}|set(EVENT_SCOPES)|writers|getattr(checker,'discovery_needed',set())
             if node.get('key')=='arrival_effect' and node.get('value') in keys:return True
             if 'macro_parts' in node:
                 source=''.join('$'+p['text']+'$' if p['parameter'] else p['text'] for p in node['macro_parts'])

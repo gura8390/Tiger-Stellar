@@ -10,8 +10,9 @@ from assets_names import AssetsNames
 from context_flow import ContextFlow
 from coverage_extensions import CoverageExtensions
 from fleet_actions import FleetActions
+from entry_lists import EntryLists
 
-class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames,ContextFlow,CoverageExtensions,FleetActions):
+class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames,ContextFlow,CoverageExtensions,FleetActions,EntryLists):
     def building_icon_asset(self,value,n):
         """Building icons may name a surviving DDS without a building entity."""
         if not value or any(s in value for s in ['..','/','\\']):return False
@@ -209,6 +210,11 @@ class CoverageRules(HandoffRules,ShipContracts,EngineEntries,AssetsNames,Context
         if self.handoff_field(category,child,ctx):return True
         from stellar import children,fields
         k=child.get('key','')
+        if category=='special_projects' and k=='desc':
+            # Installed 06_projects_nomads explicitly documents desc THIS as
+            # the disabled vessel, matching event_scope. ROOT/FROM unspecified.
+            from stellar import Context,UNKNOWN
+            self.description(child,Context(ctx.current,UNKNOWN));return True
         if category=='special_projects' and k=='triggered_requirement':
             from stellar import Context,UNKNOWN
             if not self.require_block(child):return True
