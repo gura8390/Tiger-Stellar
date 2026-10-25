@@ -1,0 +1,10 @@
+[package]
+name = "tiger-stellar"
+version = "0.1.9-tmp"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+stellaris-parser = { path = "../stellaris-parser" }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"

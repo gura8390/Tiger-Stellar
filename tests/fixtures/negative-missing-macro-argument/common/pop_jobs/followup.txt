@@ -1,1 +1,0 @@
-﻿stellar_fixture_job = { possible_pre_triggers = { is_robotic = no } }

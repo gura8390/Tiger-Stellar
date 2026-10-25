@@ -1,2 +1,0 @@
-﻿tiger_stellar_player_owner = { owner = { has_technology = tiger_missing_tech } }
-tiger_stellar_macro = { $SCOPE$ = { is_ai = $VALUE|no$ } }

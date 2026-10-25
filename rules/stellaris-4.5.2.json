@@ -4,22 +4,22 @@
   "game_version": "v4.5.2",
   "sources": {
     "triggers": {
-      "path": "E:\\WFDH\\Paradox Interactive\\Stellaris\\logs\\script_documentation\\triggers.log",
+      "path": "\u003Cscript_documentation\u003E/triggers.log",
       "sha256": "f67955c6c2915277a57ba096442029d59721119ecc145bccaebea06c1184f2c7",
       "mtime_ns": 1791991268487259400
     },
     "effects": {
-      "path": "E:\\WFDH\\Paradox Interactive\\Stellaris\\logs\\script_documentation\\effects.log",
+      "path": "\u003Cscript_documentation\u003E/effects.log",
       "sha256": "ad908a6bcbc2b1bb0a56046083d45c18ca7292c72441d97db160ed691c1e7116",
       "mtime_ns": 1791991268601373600
     },
     "scopes": {
-      "path": "E:\\WFDH\\Paradox Interactive\\Stellaris\\logs\\script_documentation\\scopes.log",
+      "path": "\u003Cscript_documentation\u003E/scopes.log",
       "sha256": "69ddf13f32b7f9b16327fa80d22f782629cf8839b57de2689852617f44de6ad4",
       "mtime_ns": 1791991268601373600
     },
     "modifiers": {
-      "path": "E:\\WFDH\\Paradox Interactive\\Stellaris\\logs\\script_documentation\\modifiers.log",
+      "path": "\u003Cscript_documentation\u003E/modifiers.log",
       "sha256": "f3af9487255e3e271cb528bf6e1200fbaa979aa02871524e8fabff650f3260dd",
       "mtime_ns": 1791991268474404600
     }
@@ -70632,19 +70632,19 @@
   ],
   "numeric_expression_sources": [
     {
-      "path": "E:\\SteamLibrary\\steamapps\\common\\Stellaris\\events\\000_how_to_use_variables_in_script.txt",
+      "path": "\u003Cgame\u003E/events/000_how_to_use_variables_in_script.txt",
       "sha256": "3e5999f3d59b9c338f506726306112cd038355b9b2011930c225926b5b0b66c3"
     },
     {
-      "path": "E:\\SteamLibrary\\steamapps\\common\\Stellaris\\events\\unrest_events.txt",
+      "path": "\u003Cgame\u003E/events/unrest_events.txt",
       "sha256": "36262f10c342276f33724081cb34e41e3503b6a9638701b6f430800b6a423d6e"
     },
     {
-      "path": "E:\\SteamLibrary\\steamapps\\common\\Stellaris\\events\\biogenesis_origin_events.txt",
+      "path": "\u003Cgame\u003E/events/biogenesis_origin_events.txt",
       "sha256": "c72ad17695a8f9e9df8ab107234c948f3dc21cbfc5db59d0ecddffd4eda1e449"
     },
     {
-      "path": "E:\\SteamLibrary\\steamapps\\common\\Stellaris\\events\\federations_election_events.txt",
+      "path": "\u003Cgame\u003E/events/federations_election_events.txt",
       "sha256": "541812484a6b1ee0a0a5bcd9919b9d3ec5694f7bd159f1d8a2f3be3e33c3c646"
     }
   ],

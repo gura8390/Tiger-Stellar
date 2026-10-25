@@ -1,2 +1,0 @@
-﻿tiger_stellar_player_owner = { owner = { has_government = theocracy_government } }
-tiger_stellar_macro = { $SCOPE$ = { is_ai = $VALUE|no$ } }

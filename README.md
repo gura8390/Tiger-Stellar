@@ -1,65 +1,62 @@
-# Tiger Stellar 0.1.8
+# Tiger Stellar 0.1.9tmp
 
-A Windows static checker for **Stellaris Cygnus 4.5.2 (9776)** mods, with a Tiger-derived Rust syntax parser and a separate Python semantic checker.
+Windows static checker for **Stellaris Cygnus 4.5.2** mods. The checker and its isolated syntax worker run in Rust; there is no Python semantic runtime or Python fallback.
 
-群星模组静态检查器：基于 Tiger 解析器，独立实现群星规则、作用域检查、实体引用与多模组覆盖分析。
+群星模组静态检查器。此版本为 Rust 原生实现的实验临时版，目标游戏版本为 Stellaris 4.5.2。
 
-## Latest changes / 最新变化
-
-**0.1.8** improves implicit AND and scripted type-guard narrowing, on_action event lists and preset FROM propagation, event-picture resource references, special-project condition descriptions, and agreement-term values. Missing FROM context remains unknown across multiple callers. Existing JSON, severity and diagnostic keys are retained. See [CHANGELOG.md](CHANGELOG.md) for details and validation limits.
-
-中文：补充隐式 AND 与脚本类型守卫收窄、on_action 普通／加权事件列表及预设 FROM 传播，以及事件图片、特殊项目条件描述和协议条款值引用。多个调用入口缺少 FROM 时保留未知，不借用其他入口的类型。
-
-## Credits and thanks / 致谢
-
-The original [Tiger](https://github.com/amtep/tiger) was created by [@amtep](https://github.com/amtep). Thank you to @amtep and the [upstream contributors](CONTRIBUTORS.md) for the time, expertise, and care invested in Tiger. This project adapts its syntax core and adds a separate Stellaris semantic layer; it is independently maintained and is not an official upstream release.
-
-感谢原作者 [@amtep](https://github.com/amtep) 及所有上游贡献者创建和维护 Tiger。本项目复用并适配其语法解析核心，新增独立的群星语义检查层，感谢他们的付出与开源贡献。
-
-The syntax core is derived from upstream commit [`9e3d3b25`](https://github.com/amtep/tiger/commit/9e3d3b25c7524cdcc86d5f4190f3f8cffbc4d630), with subsequent local changes. The standalone parser does not link Tiger's other game backends. Original notices are retained. This repository is licensed under **GPL-3.0-or-later**; see [LICENSE](LICENSE).
+The displayed version and Git tag are `0.1.9tmp`. Cargo uses the valid SemVer package version `0.1.9-tmp`; these names identify the same temporary version.
 
 ## Build and test
 
-Requirements: Windows, Python 3.12 or later, and a current stable Rust toolchain. Rust must be on `PATH`, with the build tools required by the selected Windows toolchain (Visual Studio C++ Build Tools for MSVC, or a configured GNU toolchain).
+Requirements: Windows, PowerShell, and an installed Rust toolchain with Cargo on `PATH`. The selected toolchain must have its required linker and Windows build dependencies available. The build does not install a Rust toolchain or download game files.
 
 ```powershell
 .\build.ps1
 ```
 
-This builds `dist/stellaris-parser.exe` and runs the Python regression suite. It uses only the standalone workspace under `upstream/`; no other game backend or local game installation is needed for these tests. To additionally package the Windows application:
+The script builds the locked Rust workspace, runs its release-mode workspace tests against the newly built checker, and writes `build/bin/tiger-stellar.exe` plus its SHA256 file. Tests use small local fixtures and do not require an installed game.
 
-```powershell
-python -m pip install -r requirements-build.txt
-.\build.ps1 -Package
-```
+Temporary files, Cargo's package cache and the target directory default to directories under `build/`. Explicit `CARGO_HOME` and `CARGO_TARGET_DIR` values, or the script's `-CargoHome` and `-TargetDir` parameters, select alternate locations. The script restores its process environment when it finishes. Integration-test fixture trees are generated under the repository's ignored `verification/` directory.
 
 ## Usage
 
 ```powershell
-python -X utf8 .\src\stellar.py --game "C:\Games\Stellaris" --mod "C:\Mods\MyMod" --cache .\cache --output .\reports\my-mod.json
+.\build\bin\tiger-stellar.exe --game "<Stellaris directory>" --mod "<mod directory>" --output .\build\reports\mod.json --language simp_chinese
 ```
 
-For a packaged build, use `dist/tiger-stellar/tiger-stellar.exe` with the same arguments. Run `--help` for all options. Repeat `--dependency <directory>` in load order; `--mod` is the final checked mod. The checker respects `replace_path` and file overrides. `--native-control` compares diagnostics against a targeted vanilla baseline. Game files and Workshop dependencies must be supplied locally; they are not included or downloaded automatically.
+`--game` and `--output` are required. The game directory must contain Stellaris's `launcher-settings.json`. The mod argument is the actual mod directory.
 
-## Coverage and limits / 检查边界
+| Option | Purpose |
+| --- | --- |
+| `--mod PATH` | Select the final mod being checked. Omit it to check the supplied game inputs. |
+| `--dependency PATH` | Add a dependency; repeat in load order before the final mod. |
+| `--language LANGUAGE` | Check localization against a selected language, for example `simp_chinese`. |
+| `--cache PATH` | Select an optional parser-result cache directory. |
+| `--rules FILE` | Use a supplied Stellaris rules JSON. |
+| `--syntax-only` | Check syntax without claiming semantic validation. |
+| `--version`, `--help` | Print the version or supported command line. |
 
-Checks include syntax, supported trigger/effect scopes, scope links, scripted calls and macros, common entity references, modifiers, ship/component contracts, localization references, and layered mod definitions. Rule extraction tools are included under `tools/` for maintainers with a local game installation and engine-generated script documentation.
+Game-version differences produce a warning and validation continues. Inputs for another game are rejected. File overrides and `replace_path` follow the supplied dependency order. The JSON report retains diagnostic severity, source locations, available call-chain evidence and input hashes.
 
-**Experimental, partial semantic coverage.** Unknown or incompletely supported constructs remain visible as coverage warnings. Diagnostics can include existing vanilla issues and false positives; they are not proof that a mod is broken or correct. Full semantic validation and in-game/save-game acceptance have not been established. GUI/rendering semantics, some parameter structures, and dynamic contexts remain incomplete. Rule tables target the version above and need review after game updates.
+| Exit code | Meaning |
+| --- | --- |
+| `0` | No errors or warnings, with a nonempty checked target. |
+| `1` | At least one reported error. |
+| `2` | No errors, but warnings or an empty target. This is not a clean validation result. |
+| `3` | Input, argument or other infrastructure failure. |
 
-本版本已完成相应交付，但仍是实验性的有限语义检查器。未覆盖区域保留告警；检查结果不等于引擎、玩法或存档验收，也不保证无误报。
+## Validation boundary
 
-This repository contains runnable source, rules, synthetic regression fixtures, and build instructions. Machine-specific handoffs, design documents, private verification copies, game assets, caches, and release archives are excluded.
+**Experimental, partial semantic coverage.** Full DSL coverage, complete parity with 0.1.8, and game-engine acceptance have not been established. Unknown contracts remain visible as warnings. A static result does not prove gameplay, save compatibility, rendering quality, runtime target availability or performance in the game.
 
+Supported checks include modeled trigger/effect scopes, script and macro calls, references, selected declaration contracts, numeric expressions and resource files. Guard and saved-target type evidence do not establish that an engine callback actually runs or that a target exists at runtime. Some diagnostics can originate in inherited game code; retain and investigate them with their original severity.
 
-## Implementation overview / 实现范围
+The syntax worker may reuse a bounded, successful reader-header compilation. It still parses each body with a fresh local overlay; this cache does not store semantic states or suppress failed-header diagnostics.
 
-| Component | What this project adds or adapts |
-|---|---|
-| Syntax parser | Standalone Tiger-derived Rust syntax core; no other game backend is linked. |
-| Stellaris rules | Versioned Stellaris 4.5.2 scope/API and declaration tables. |
-| Semantic checker | Layered definitions, references, scope checks, scripted calls, component/ship contracts and localization checks in Python. |
-| Diagnostics | Targeted vanilla comparisons, provenance, override reports and explicit coverage warnings. |
-| Regression suite | 394 source-level tests and 9 Rust parser tests passed for the 0.1.8 publication; no in-game acceptance is implied. |
+中文：未实现或无法证明的合同继续报告为未知。零错误不能替代引擎验收，也不代表完整覆盖。请结合原版接口、正反例和实际游戏测试判断结果。
 
-This repository currently publishes source rather than binary Release downloads. For the separate CK3 adaptation, see [Tiger CK3](https://github.com/gura8390/Tiger-CK3).
+## Credits and license
+
+The syntax core is derived from [amtep/tiger](https://github.com/amtep/tiger), originally based on upstream commit [`9e3d3b25`](https://github.com/amtep/tiger/commit/9e3d3b25c7524cdcc86d5f4190f3f8cffbc4d630), with local changes. Thanks to @amtep and the [upstream contributors](CONTRIBUTORS.md). Tiger Stellar is independently maintained and is not an official upstream release. Its standalone workspace does not link other Tiger game backends.
+
+Project code is licensed under **GPL-3.0-or-later**; see [LICENSE](LICENSE). Original notices and `CONTRIBUTORS.md` are retained. See [third-party notes](THIRD_PARTY/README.md) for the minimal game-data test excerpt.

@@ -60,7 +60,10 @@ fn parse_pdx(entry: &FileEntry, content: &'static str, memory: &ParserMemory) ->
             block
         }
         Err(e) => {
-            eprintln!("Internal error: parsing file {} failed.\n{e}", entry.path().display());
+            eprintln!(
+                "Internal error: parsing file {} failed.\n{e}",
+                entry.path().display()
+            );
             Block::new(inputs[0].loc)
         }
     }
@@ -85,7 +88,7 @@ pub fn parse_reader_export(
     content: String,
     offset: usize,
     global: &mut PdxfileMemory,
-) {
+) -> bool {
     let content = content.leak();
     store_source_file(entry.fullpath().to_path_buf(), &content[offset..]);
     let content = &content[offset..];
@@ -97,9 +100,14 @@ pub fn parse_reader_export(
     match FILE_PARSER.parse(&inputs, &mut combined, Lexer::new(&inputs)) {
         Ok(_) => {
             global.merge(combined.into_local());
+            true
         }
         Err(e) => {
-            eprintln!("Internal error: parsing file {} failed.\n{e}", entry.path().display());
+            eprintln!(
+                "Internal error: parsing file {} failed.\n{e}",
+                entry.path().display()
+            );
+            false
         }
     }
 }
@@ -149,29 +157,64 @@ impl MacroComponent {
 /// inside those.
 fn split_macros(token: &Token) -> Vec<MacroComponent> {
     if cfg!(feature = "stellaris_parser") {
-        let text = token.as_str(); let mut parts = Vec::new(); let mut pos = 0; let mut last = 0; let mut quoted = false; let mut comment = false;
+        let text = token.as_str();
+        let mut parts = Vec::new();
+        let mut pos = 0;
+        let mut last = 0;
+        let mut quoted = false;
+        let mut comment = false;
         let bytes = text.as_bytes();
         while pos < bytes.len() {
             let c = bytes[pos];
-            if comment { if c == b'\n' { comment = false; } pos += 1; continue; }
-            if c == b'"' && (pos == 0 || bytes[pos-1] != b'\\') { quoted = !quoted; }
-            if c == b'#' && !quoted { comment = true; pos += 1; continue; }
+            if comment {
+                if c == b'\n' {
+                    comment = false;
+                }
+                pos += 1;
+                continue;
+            }
+            if c == b'"' && (pos == 0 || bytes[pos - 1] != b'\\') {
+                quoted = !quoted;
+            }
+            if c == b'#' && !quoted {
+                comment = true;
+                pos += 1;
+                continue;
+            }
             if c == b'$' {
-                if let Some(length) = text[pos+1..].find('$') {
+                if let Some(length) = text[pos + 1..].find('$') {
                     let end = pos + 1 + length;
-                    let name = &text[pos+1..end];
-                    if !name.is_empty() && !name.contains(['\n','\r']) {
+                    let name = &text[pos + 1..end];
+                    if !name.is_empty() && !name.contains(['\n', '\r']) {
                         let mut loc = token.loc;
-                        for ch in text[..pos].chars() { if ch == '\n' { loc.line += 1; loc.column = 1; } else { loc.column += 1; } }
-                        parts.push(MacroComponent { kind: MacroComponentKind::Source, token: Token::new(&text[last..pos],loc) });
-                        parts.push(MacroComponent { kind: MacroComponentKind::Macro, token: Token::new(name,loc) });
-                        pos = end + 1; last = pos; continue;
+                        for ch in text[..pos].chars() {
+                            if ch == '\n' {
+                                loc.line += 1;
+                                loc.column = 1;
+                            } else {
+                                loc.column += 1;
+                            }
+                        }
+                        parts.push(MacroComponent {
+                            kind: MacroComponentKind::Source,
+                            token: Token::new(&text[last..pos], loc),
+                        });
+                        parts.push(MacroComponent {
+                            kind: MacroComponentKind::Macro,
+                            token: Token::new(name, loc),
+                        });
+                        pos = end + 1;
+                        last = pos;
+                        continue;
                     }
                 }
             }
             pos += 1;
         }
-        parts.push(MacroComponent { kind: MacroComponentKind::Source, token: Token::new(&text[last..], token.loc) });
+        parts.push(MacroComponent {
+            kind: MacroComponentKind::Source,
+            token: Token::new(&text[last..], token.loc),
+        });
         return parts;
     }
     let mut vec = Vec::new();
@@ -187,7 +230,10 @@ fn split_macros(token: &Token) -> Vec<MacroComponent> {
             // Do this before pushing `param` to the vec, because it uses `param`.
             index_loc = (end, param.loc);
             index_loc.1.column += 1 + param.as_str().chars().count() as u32;
-            vec.push(MacroComponent { kind: MacroComponentKind::Macro, token: param });
+            vec.push(MacroComponent {
+                kind: MacroComponentKind::Macro,
+                token: param,
+            });
         }
     }
     vec.push(MacroComponent {
@@ -201,6 +247,17 @@ fn split_macros(token: &Token) -> Vec<MacroComponent> {
 
 type HasMacroParams = bool;
 
+// Keep unexpanded parameters distinguishable from ordinary literals in the
+// standalone Stellaris AST, including inside nested engine-effect blocks.
+// Macro source splitting still uses the lexer's original bare parameter name.
+fn macro_value(token: Token) -> Token {
+    if cfg!(feature = "stellaris_parser") {
+        Token::new(&format!("${}$", token.as_str()), token.loc)
+    } else {
+        token
+    }
+}
+
 fn define_var(memory: &mut CombinedMemory, token: &Token, cmp: Comparator, value: Token) {
     // A direct `@name = value` assignment gets the leading `@`,
     // while a `@:register_variable name = value` does not.
@@ -212,7 +269,9 @@ fn define_var(memory: &mut CombinedMemory, token: &Token, cmp: Comparator, value
         let msg = format!("expected `{name} =`");
         err(ErrorKey::ReaderDirectives).msg(msg).loc(token).push();
     }
-    if (cfg!(feature = "stellaris_parser") && memory.has_local_variable(name)) || (!cfg!(feature = "stellaris_parser") && memory.has_variable(name)) {
+    if (cfg!(feature = "stellaris_parser") && memory.has_local_variable(name))
+        || (!cfg!(feature = "stellaris_parser") && memory.has_variable(name))
+    {
         let msg = format!("`{name}` is already defined as a reader variable");
         err(ErrorKey::ReaderDirectives).msg(msg).loc(token).push();
     } else if Game::is_jomini() && !name.starts_with(|c: char| c.is_ascii_alphabetic()) {
@@ -257,7 +316,11 @@ fn get_numeric_var(memory: &CombinedMemory, name: &Token) -> f64 {
             value
         } else {
             let msg = format!("expected reader variable `{name}` to be numeric");
-            err(ErrorKey::ReaderDirectives).msg(msg).loc(name).loc_msg(v, "defined here").push();
+            err(ErrorKey::ReaderDirectives)
+                .msg(msg)
+                .loc(name)
+                .loc_msg(v, "defined here")
+                .push();
             0.0
         }
     } else {

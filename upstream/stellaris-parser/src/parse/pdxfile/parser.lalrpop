@@ -3,7 +3,7 @@ use lalrpop_util::ParseError;
 use crate::block::{Block, BV, BlockItem, Comparator, Eq, Field};
 use crate::parse::pdxfile::lexer::{Directive, Lexeme, LexError};
 use crate::parse::pdxfile::memory::CombinedMemory;
-use crate::parse::pdxfile::{HasMacroParams, define_var, warn_macros, split_macros, report_error, get_numeric_var};
+use crate::parse::pdxfile::{HasMacroParams, define_var, warn_macros, split_macros, report_error, get_numeric_var, macro_value};
 use crate::report::{err, warn, ErrorKey};
 use crate::token::Token;
 
@@ -201,7 +201,7 @@ Value: (Token, HasMacroParams) = {
         }
     },
     <token:Calculation> => (token, false),
-    <param:param> => (param.into_token(), true),
+    <param:param> => (macro_value(param.into_token()), true),
 }
 
 /// The left-hand side of assignments.
@@ -210,7 +210,7 @@ Value: (Token, HasMacroParams) = {
 Key: (Token, HasMacroParams) = {
     <token:token> => (token.into_token(), false),
     <token:Calculation> => (token, false),
-    <param:param> => (param.into_token(), true),
+    <param:param> => (macro_value(param.into_token()), true),
     // Edge case: using `@:load_variable` to name the key
     <directive:"@:load_variable"> <name:token> => {
         let name = name.into_token();

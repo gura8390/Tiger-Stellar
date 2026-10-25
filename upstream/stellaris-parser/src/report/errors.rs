@@ -71,7 +71,10 @@ pub struct Errors<'a> {
 
 impl Errors<'_> {
     fn should_suppress(&self, report: &LogReportMetadata, pointers: &LogReportPointers) -> bool {
-        let key = SuppressionKey { key: report.key, message: Cow::Borrowed(&report.msg) };
+        let key = SuppressionKey {
+            key: report.key,
+            message: Cow::Borrowed(&report.msg),
+        };
         if let Some(v) = self.suppress.get(&key) {
             for suppression in v {
                 if suppression.len() != pointers.len() {
@@ -125,8 +128,9 @@ impl Errors<'_> {
             .storage
             .iter()
             .flat_map(|(report, occurrences)| -> Box<dyn Iterator<Item = _>> {
-                let mut iterator =
-                    occurrences.iter().filter(|pointers| !self.should_ignore(report, pointers));
+                let mut iterator = occurrences
+                    .iter()
+                    .filter(|pointers| !self.should_ignore(report, pointers));
                 match report.style {
                     LogReportStyle::Full => {
                         if consolidate && LOG_ONCE.contains(&report.key) {
@@ -336,9 +340,17 @@ fn pointed_msg_expansion(pointers: Vec<PointedMessage>) -> Vec<PointedMessage> {
                     next_loc = stack.link_idx.and_then(|idx| MACRO_MAP.get_loc(idx));
                     stack.link_idx = None;
                     let next = if first {
-                        PointedMessage { loc: stack, length: p.length, msg: p.msg.clone() }
+                        PointedMessage {
+                            loc: stack,
+                            length: p.length,
+                            msg: p.msg.clone(),
+                        }
                     } else {
-                        PointedMessage { loc: stack, length: 1, msg: Some("from here".into()) }
+                        PointedMessage {
+                            loc: stack,
+                            length: 1,
+                            msg: Some("from here".into()),
+                        }
                     };
                     first = false;
                     Some(next)
@@ -351,7 +363,9 @@ fn pointed_msg_expansion(pointers: Vec<PointedMessage>) -> Vec<PointedMessage> {
 
 /// Tests whether the report might be printed. If false, the report will definitely not be printed.
 pub fn will_maybe_log<E: ErrorLoc>(eloc: E, key: ErrorKey) -> bool {
-    Errors::get().filter.should_maybe_print(key, eloc.into_loc())
+    Errors::get()
+        .filter
+        .should_maybe_print(key, eloc.into_loc())
 }
 
 /// Print all the stored reports to the error output.
@@ -379,6 +393,13 @@ pub fn take_reports() -> TigerHashMap<LogReportMetadata, TigerHashSet<LogReportP
     take(&mut Errors::get_mut().storage)
 }
 
+/// Inspect pending report storage without draining, filtering or sorting it.
+/// This deliberately matches the storage consumed by `take_reports`, rather
+/// than the ignore-filtered view returned by `flatten_reports`.
+pub fn reports_are_empty() -> bool {
+    Errors::get().storage.is_empty()
+}
+
 pub fn store_source_file(fullpath: PathBuf, source: &'static str) {
     Errors::get_mut().store_source_file(fullpath, source);
 }
@@ -390,7 +411,11 @@ where
     let start = lines.start_bound().cloned();
     let end = lines.end_bound().cloned();
     let entry = IgnoreEntry { start, end, filter };
-    Errors::get_mut().ignore.entry(pathname).or_default().push(entry);
+    Errors::get_mut()
+        .ignore
+        .entry(pathname)
+        .or_default()
+        .push(entry);
 }
 
 // =================================================================================================
